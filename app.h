@@ -21,7 +21,6 @@
 #include <poll.h>
 
 #include "shader.h"
-#include "lazy_load.h"
 
 void message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, GLchar const* message, void const* user_param)
 {
