@@ -5,12 +5,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-
 #define BS_THREAD_POOL_ENABLE_PRIORITY
 #include <BS_thread_pool.hpp>
-#include <lancir.h>
 
 #include <iostream>
 #include <ranges>
@@ -22,6 +18,7 @@
 
 #include "shader.h"
 #include "repaging.h"
+#include "loader_thread.h"
 
 void message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, GLchar const* message, void const* user_param)
 {
@@ -62,40 +59,6 @@ void message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GL
 	std::cout << src_str << ", " << type_str << ", " << severity_str << ", " << id << ": " << message << '\n';
 }
 
-struct image_data
-{
-	std::vector<uint8_t> pixels;
-	glm::ivec2 size;
-};
-
-image_data load_image(const std::string& path, int desired_width)
-{
-	image_data data;
-
-	int width, height;
-	uint8_t* pixels = stbi_load(path.c_str(), &width, &height, nullptr, 3);
-
-	int desired_height = height * desired_width / width;
-	data.size = {desired_width, desired_height};
-	std::vector<uint8_t> resized_pixels(desired_width * desired_height * 3);
-
-	avir::CLancIR resizer;
-	resizer.resizeImage(pixels, width, height, resized_pixels.data(), desired_width, desired_height, 3);
-
-	data.pixels.reserve(desired_width * desired_height * 4);
-	for (int i = 0; i < resized_pixels.size(); i+=3)
-	{
-		data.pixels.push_back(resized_pixels[i]);
-		data.pixels.push_back(resized_pixels[i+1]);
-		data.pixels.push_back(resized_pixels[i+2]);
-		data.pixels.push_back(0);
-	}
-
-	stbi_image_free(pixels);
-
-	return data;
-}
-
 class image_viewer
 {
 private:
@@ -122,32 +85,24 @@ private:
 		int tag_index = -1;
 	} curr_image_pos;
 
-	image_pos advance_pos(image_pos pos, int offset)
+	image_pos advance_pos(image_pos pos, int dir)
 	{
 		auto tag_it = tags_indices.find(pos.tag);
 		if (tag_it == tags_indices.end())
 			return {-1, -1};
 
 		int tag_size = tag_it->second.size();
-		while (offset != 0)
+		pos.tag_index += dir;
+		if (pos.tag_index == -1 || pos.tag_index == tag_size)
 		{
-			int tag_offset = std::clamp(pos.tag_index + offset, 0, tag_size - 1) - pos.tag_index;
-			offset = offset - tag_offset;
-			pos.tag_index += tag_offset;
-
-			if (offset != 0)
+			if ((dir > 0 && std::next(tag_it) == tags_indices.end()) ||
+					(dir < 0 && tag_it == tags_indices.begin()))
+				pos.tag_index -= dir;
+			else
 			{
-				int offset_dir = (offset > 0) - (offset < 0);
-				if ((offset > 0 && std::next(tag_it) == tags_indices.end()) ||
-						(offset < 0 && tag_it == tags_indices.begin()))
-					break;
-
-				std::advance(tag_it, offset_dir);
-				tag_size = tag_it->second.size();
-				offset -= offset_dir;
-
+				std::advance(tag_it, dir);
 				pos.tag = tag_it->first;
-				pos.tag_index = offset_dir > 0 ? 0 : tag_size - 1;
+				pos.tag_index = dir > 0 ? 0 : tag_it->second.size() - 1;
 			}
 		}
 
@@ -355,19 +310,19 @@ private:
 		int page_number = tag_page_numbers[pos.tag_index];
 
 		int page_start_index = pos.tag_index; //initial guess in case already at beginning
-		for (int tag_index = page_start_index - 1; tag_index >= 0; --tag_index)
+		for (int tag_index = page_start_index - 1;; --tag_index)
 		{
-			if (tag_page_numbers[tag_index] != page_number)
+			if (tag_index < 0 || tag_page_numbers[tag_index] != page_number)
 				break;
 
 			page_start_index = tag_index;
 		}
 
-		int page_end_index;
-		for (int tag_index = page_start_index + 1; tag_index < tag_indices.size(); ++tag_index)
+		int page_end_index = page_start_index + 1;
+		for (int tag_index = page_start_index + 1;; ++tag_index)
 		{
 			page_end_index = tag_index;
-			if (tag_page_numbers[tag_index] != page_number)
+			if (tag_index == tag_indices.size() || tag_page_numbers[tag_index] != page_number)
 				break;
 		}
 
