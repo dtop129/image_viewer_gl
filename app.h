@@ -110,8 +110,8 @@ private:
 
 	std::vector<std::string> image_paths;
 	std::vector<glm::ivec2> image_sizes;
-	// tag -> vector of indices pointing to image_paths/image_sizes
-	std::map<int, std::vector<int>> tags_indices;
+	std::map<int, std::vector<int>> tags_indices; //tag -> vector of indices pointing to image_paths/image_sizes
+	std::unordered_map<int, std::vector<int>> page_markers; //tag -> vector of indices(referring to tags_indices) indicating the start of a page
 
 	BS::thread_pool loader_pool;
 
@@ -162,13 +162,12 @@ private:
 
 	void init_GLresources()
 	{
-		program.init("shaders/vert.glsl", "shaders/frag.glsl");
+		glCreateVertexArrays(1, &null_vaoID);
 
+		program.init("shaders/vert.glsl", "shaders/frag.glsl");
 		glm::mat4 proj = glm::ortho(0.f, 800.f, 600.f, 0.f);
 		glProgramUniformMatrix4fv(program.id(), 0, 1, 0, &proj[0][0]);
-		glProgramUniform2f(program.id(), 1, 0, 0);
-
-		glCreateVertexArrays(1, &null_vaoID);
+		glViewport(0, 0, 800, 600);
 
 		glCreateTextures(GL_TEXTURE_2D, 1, &white_texID);
 		uint8_t white_pixel[] = {255, 255, 255, 255};
@@ -194,7 +193,6 @@ private:
 		{
 			case GLFW_KEY_SPACE:
 				curr_image_pos = advance_pos(curr_image_pos, 1);
-				std::cout << curr_image_pos.tag_index << std::endl;
 				break;
 			case GLFW_KEY_BACKSPACE:
 				curr_image_pos = advance_pos(curr_image_pos, -1);
@@ -289,15 +287,8 @@ private:
 		if (tex_it != texture_IDs.end())
 			return tex_it->second;
 
-		image_data image_data;
-
-		if (auto data_it = loading_texdata.find(tex_key);
-				data_it != loading_texdata.end() && data_it->second.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
-		{
-			image_data = data_it->second.get();
-			loading_texdata.erase(data_it);
-		}
-		else
+		auto data_it = loading_texdata.find(tex_key);
+		if (data_it == loading_texdata.end() || data_it->second.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
 		{
 			preload_texdata(image_index, width);
 
@@ -313,10 +304,13 @@ private:
 			return white_texID;
 		}
 
+		image_data loaded_data = data_it->second.get();
+		loading_texdata.erase(data_it);
+
 		GLuint& texID = texture_IDs[tex_key];
 		glCreateTextures(GL_TEXTURE_2D, 1, &texID);
-		glTextureStorage2D(texID, 1, GL_RGBA8, image_data.size.x, image_data.size.y);
-		glTextureSubImage2D(texID, 0, 0, 0, image_data.size.x, image_data.size.y, GL_RGBA, GL_UNSIGNED_BYTE, image_data.pixels.data());
+		glTextureStorage2D(texID, 1, GL_RGBA8, loaded_data.size.x, loaded_data.size.y);
+		glTextureSubImage2D(texID, 0, 0, 0, loaded_data.size.x, loaded_data.size.y, GL_RGBA, GL_UNSIGNED_BYTE, loaded_data.pixels.data());
 
 		return texID;
 	}
