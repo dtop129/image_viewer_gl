@@ -8,7 +8,7 @@ OBJS=main.o gl3w.o
 gl3w.o: gl3w.c
 	clang++ $(CPPFLAGS) -c $< -o $@
 
-main.o: main.cpp app.h shader.h
+main.o: main.cpp app.h shader.h repaging.h
 	clang++ $(CPPFLAGS) -c $< -o $@
 
 viewer: $(OBJS)

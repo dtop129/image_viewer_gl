@@ -21,6 +21,7 @@
 #include <poll.h>
 
 #include "shader.h"
+#include "repaging.h"
 
 void message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, GLchar const* message, void const* user_param)
 {
@@ -111,7 +112,7 @@ private:
 	std::vector<std::string> image_paths;
 	std::vector<glm::ivec2> image_sizes;
 	std::map<int, std::vector<int>> tags_indices; //tag -> vector of indices pointing to image_paths/image_sizes
-	std::unordered_map<int, std::vector<int>> page_markers; //tag -> vector of indices(referring to tags_indices) indicating the start of a page
+	std::unordered_map<int, std::vector<int>> page_numbers; //tag -> vector of indices(referring to tags_indices) indicating the page index
 
 	BS::thread_pool loader_pool;
 
@@ -123,11 +124,11 @@ private:
 
 	image_pos advance_pos(image_pos pos, int offset)
 	{
-		auto tag_iter = tags_indices.find(pos.tag);
-		if (tag_iter == tags_indices.end())
+		auto tag_it = tags_indices.find(pos.tag);
+		if (tag_it == tags_indices.end())
 			return {-1, -1};
 
-		int tag_size = tag_iter->second.size();
+		int tag_size = tag_it->second.size();
 		while (offset != 0)
 		{
 			int tag_offset = std::clamp(pos.tag_index + offset, 0, tag_size - 1) - pos.tag_index;
@@ -137,17 +138,38 @@ private:
 			if (offset != 0)
 			{
 				int offset_dir = (offset > 0) - (offset < 0);
-				if ((offset > 0 && std::next(tag_iter) == tags_indices.end()) ||
-						(offset < 0 && tag_iter == tags_indices.begin()))
+				if ((offset > 0 && std::next(tag_it) == tags_indices.end()) ||
+						(offset < 0 && tag_it == tags_indices.begin()))
 					break;
 
-				std::advance(tag_iter, offset_dir);
-				tag_size = tag_iter->second.size();
+				std::advance(tag_it, offset_dir);
+				tag_size = tag_it->second.size();
 				offset -= offset_dir;
 
-				pos.tag = tag_iter->first;
+				pos.tag = tag_it->first;
 				pos.tag_index = offset_dir > 0 ? 0 : tag_size - 1;
 			}
+		}
+
+		return pos;
+	}
+
+	image_pos advance_page(image_pos pos, int dir)
+	{
+		auto page_numbers_it = page_numbers.find(pos.tag);
+		if (page_numbers_it == page_numbers.end())
+			return {-1, -1};
+
+		int start_page_number = page_numbers_it->second[pos.tag_index];
+		int page_number = start_page_number;
+		while (start_page_number == page_number)
+		{
+			image_pos new_pos = advance_pos(pos, dir);
+			if (new_pos.tag == pos.tag && new_pos.tag_index == pos.tag_index)
+				return new_pos;
+
+			page_number = page_numbers[new_pos.tag][new_pos.tag_index];
+			pos = new_pos;
 		}
 
 		return pos;
@@ -190,10 +212,10 @@ private:
 		switch (key)
 		{
 			case GLFW_KEY_SPACE:
-				curr_image_pos = advance_pos(curr_image_pos, 1);
+				curr_image_pos = advance_page(curr_image_pos, 1);
 				break;
 			case GLFW_KEY_BACKSPACE:
-				curr_image_pos = advance_pos(curr_image_pos, -1);
+				curr_image_pos = advance_page(curr_image_pos, -1);
 				break;
 			case GLFW_KEY_Q:
 				glfwSetWindowShouldClose(window, true);
@@ -247,11 +269,14 @@ private:
 
 			if (tag_indices.empty())
 				tags_indices.erase(tag);
+			else
+				page_numbers[tag] = get_page_numbers(tag_indices);
+
 		}
 		else if (type == "goto_offset")
 		{
 			int offset = std::stoi(args[0]);
-			curr_image_pos = advance_pos(curr_image_pos, offset);
+			curr_image_pos = advance_page(curr_image_pos, offset);
 		}
 	}
 
@@ -314,47 +339,74 @@ private:
 		return texID;
 	}
 
-	std::pair<glm::ivec2, glm::ivec2> get_centering_scale_offset(int image_index)
+	std::vector<std::pair<int, glm::ivec4>> page_render_data(image_pos pos) const
 	{
-		glm::ivec2 image_size = image_sizes[image_index];
+		auto tag_indices_it = tags_indices.find(pos.tag);
+		if (tag_indices_it == tags_indices.end())
+			return {};
 
-		float scale_x = window_size.x / static_cast<float>(image_size.x);
-		float scale_y = window_size.y / static_cast<float>(image_size.y);
+		auto tag_pages_it = page_numbers.find(pos.tag);
+		if (tag_pages_it == page_numbers.end())
+			return {};
 
+		const auto& tag_indices = tag_indices_it->second;
+		const auto& tag_page_numbers = tag_pages_it->second;
+
+		int page_number = tag_page_numbers[pos.tag_index];
+
+		int page_start_index = pos.tag_index; //initial guess in case already at beginning
+		for (int tag_index = page_start_index - 1; tag_index >= 0; --tag_index)
+		{
+			if (tag_page_numbers[tag_index] != page_number)
+				break;
+
+			page_start_index = tag_index;
+		}
+
+		int page_end_index;
+		for (int tag_index = page_start_index + 1; tag_index < tag_indices.size(); ++tag_index)
+		{
+			page_end_index = tag_index;
+			if (tag_page_numbers[tag_index] != page_number)
+				break;
+		}
+
+		int start_height = image_sizes[tag_indices[page_start_index]].y;
+		glm::vec2 rect_size(0, start_height);
+
+		for (int tag_index = page_start_index; tag_index < page_end_index; ++tag_index)
+		{
+			glm::ivec2 image_size = image_sizes[tag_indices[tag_index]];
+			rect_size.x += image_size.x * start_height / image_size.y;
+		}
+
+		float scale_x = window_size.x / static_cast<float>(rect_size.x);
+		float scale_y = window_size.y / static_cast<float>(rect_size.y);
 		float scale = std::min(scale_x, scale_y);
 
-		glm::ivec2 scaled_size = static_cast<glm::vec2>(image_size) * scale;
+		glm::ivec2 scaled_size = static_cast<glm::vec2>(rect_size) * scale;
 		glm::ivec2 offset = (window_size - scaled_size) / 2;
 
-		return {scaled_size, offset};
+		std::vector<std::pair<int, glm::ivec4>> sizes_offsets;
+		int running_offset = 0;
+		for (int tag_index = page_end_index - 1; tag_index >= page_start_index; --tag_index)
+		{
+			glm::ivec2 image_size = image_sizes[tag_indices[tag_index]];
+			int scaled_width = image_size.x * scaled_size.y / image_size.y;
+
+			sizes_offsets.emplace_back(tag_indices[tag_index], glm::ivec4(scaled_width, scaled_size.y, offset.x + running_offset, offset.y));
+
+			running_offset += scaled_width;
+		}
+
+		return sizes_offsets;
 	}
 
-	void render()
+	void preload_clean_textures()
 	{
-		auto curr_tag_it = tags_indices.find(curr_image_pos.tag);
-		if (curr_tag_it == tags_indices.end())
-			return;
-
-
-		const auto& curr_tag_indices = curr_tag_it->second;
-		int image_index = curr_tag_indices[curr_image_pos.tag_index];
-
-		auto[scaled_size, offset] = get_centering_scale_offset(image_index);
-		GLuint texID = get_texture(image_index, scaled_size.x);
-
-		glProgramUniform2f(program.id(), 1, offset.x, offset.y);
-		glProgramUniform2f(program.id(), 2, scaled_size.x, scaled_size.y);
-		glBindTextureUnit(0, texID);
-
-		glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
 		for (auto preload_offset : {1, -1})
-		{
-			image_pos preload_pos = advance_pos(curr_image_pos, preload_offset);
-			int preload_image_index = tags_indices[preload_pos.tag][preload_pos.tag_index];
-			auto[scaled_size, offset] = get_centering_scale_offset(preload_image_index);
-			preload_texdata(preload_image_index, scaled_size.x);
-		}
+			for (auto[preload_image_index, size_offset] : page_render_data(advance_page(curr_image_pos, preload_offset)))
+				preload_texdata(preload_image_index, size_offset.x);
 
 		for (auto it = texture_used.begin(); it != texture_used.end();)
 		{
@@ -378,6 +430,19 @@ private:
 			}
 		}
 		//std::cout << loading_texdata.size() << " " << texture_IDs.size() << std::endl;
+	}
+
+	void render()
+	{
+		for (auto[image_index, size_offset] : page_render_data(curr_image_pos))
+		{
+			glBindTextureUnit(0, get_texture(image_index, size_offset.x));
+			glProgramUniform2f(program.id(), 1, size_offset.z, size_offset.w);
+			glProgramUniform2f(program.id(), 2, size_offset.x, size_offset.y);
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+		}
+
+		preload_clean_textures();
 	}
 
 public:
