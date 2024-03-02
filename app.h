@@ -115,8 +115,6 @@ private:
 
 	BS::thread_pool loader_pool;
 
-	//std::vector<lazy_load<unsigned short>> image_type; //for manga paging(0 undefined, 1 left page, 2 right page, 3 wide page)
-
 	struct image_pos
 	{
 		int tag = -1;
@@ -290,7 +288,8 @@ private:
 		auto data_it = loading_texdata.find(tex_key);
 		if (data_it == loading_texdata.end() || data_it->second.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
 		{
-			preload_texdata(image_index, width);
+			if (data_it == loading_texdata.end())
+				loading_texdata.emplace(tex_key, loader_pool.submit_task([&path = image_paths[image_index], width](){ return load_image(path, width); }));
 
 			for (auto& [loaded_key, ID] : texture_IDs)
 			{
