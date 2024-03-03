@@ -34,8 +34,8 @@ int get_texture_pageside(uint8_t* pixels, int w, int h) {
 	}
 
 	unsigned int color_left = 0, color_right = 0;
-	color_left = std::accumulate(pixels_cm.begin(), pixels_cm.begin() + h, 0);
-	color_right = std::accumulate(pixels_cm.end() - h, pixels_cm.end(), 0);
+	color_left = std::accumulate(pixels_cm.begin() + h, pixels_cm.begin() + 2 * h, 0);
+	color_right = std::accumulate(pixels_cm.end() - 2 * h, pixels_cm.end() - h, 0);
 
 	color_left = color_left / h;
 	color_right = color_right / h;

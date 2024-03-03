@@ -215,9 +215,12 @@ private:
 				image_paths.push_back(image_path);
 				image_sizes.push_back(size);
 				if (size.x > size.y * 0.8)
-					image_types.push_back(4); //100 in binary
+					image_types.push_back(3); //011 in binary
 				else
 				{
+					//for debug
+					//auto fut = loader_pool.get_image_type(image_path);
+					//image_types.push_back(fut.get());
 					image_types.push_back(0);
 					loading_image_types[tag].emplace_back(image_index, loader_pool.get_image_type(image_path));
 				}
@@ -396,15 +399,39 @@ private:
 
 	std::vector<int> get_page_numbers(const std::vector<int>& indices)
 	{
-		std::vector<int> tag_page_numbers;
+		std::vector<int> tag_page_numbers(indices.size());
 		int page_index = -1;
 
-		for (unsigned int i = 0; i < indices.size(); i++)
+		int start = 0;
+		int first_alone_score = 0;
+		for (unsigned int i = 0; i <= indices.size(); ++i)
 		{
-			//if (i % 2 == 0)
-				page_index++;
+			if (i == indices.size() || image_types[indices[i]] == 3)
+			{
+				if (i < indices.size() && (i - 1 - start) % 2 == 0)
+					first_alone_score--;
+				bool first_alone = first_alone_score > 0;
+				for (unsigned int j = start; j < i; ++j)
+				{
+					if ((j - start) % 2 == first_alone || j == start)
+						++page_index;
 
-			tag_page_numbers.push_back(page_index);
+					tag_page_numbers[j] = page_index;
+				}
+				if (i < indices.size())
+					tag_page_numbers[i] = ++page_index;
+
+				start = i + 1;
+				first_alone_score = -1;
+				continue;
+			}
+
+			int type = image_types[indices[i]];
+
+			first_alone_score -= (type == 1) && (i % 2 == 0);
+			first_alone_score += (type == 1) && (i % 2 == 1);
+			first_alone_score += (type == 2) && (i % 2 == 0);
+			first_alone_score -= (type == 2) && (i % 2 == 1);
 		}
 
 		return tag_page_numbers;
