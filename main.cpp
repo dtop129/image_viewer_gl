@@ -1,4 +1,5 @@
 #include "app.h"
+#include "loader_thread.h"
 
 int main()
 {

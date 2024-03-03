@@ -5,16 +5,12 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#define BS_THREAD_POOL_ENABLE_PRIORITY
-#include <BS_thread_pool.hpp>
-
 #include <iostream>
 #include <ranges>
 #include <string>
 #include <string_view>
 #include <map>
 #include <unordered_map>
-#include <poll.h>
 
 #include "shader.h"
 #include "repaging.h"
@@ -77,7 +73,7 @@ private:
 	std::map<int, std::vector<int>> tags_indices; //tag -> vector of indices pointing to image_paths/image_sizes
 	std::unordered_map<int, std::vector<int>> page_numbers; //tag -> vector of indices(referring to tags_indices) indicating the page index
 
-	BS::thread_pool loader_pool;
+	texture_load_thread loader_pool;
 
 	struct image_pos
 	{
@@ -253,7 +249,7 @@ private:
 		if (texture_IDs.contains(tex_key) || loading_texdata.contains(tex_key))
 			return;
 
-		loading_texdata.emplace(tex_key, loader_pool.submit_task([&path = image_paths[image_index], width](){ return load_image(path, width); }));
+		loading_texdata.emplace(tex_key, loader_pool.load_texture(image_paths[image_index], width));
 	}
 
 	GLuint get_texture(int image_index, int width)
@@ -269,7 +265,7 @@ private:
 		if (data_it == loading_texdata.end() || data_it->second.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
 		{
 			if (data_it == loading_texdata.end())
-				loading_texdata.emplace(tex_key, loader_pool.submit_task([&path = image_paths[image_index], width](){ return load_image(path, width); }));
+				loading_texdata.emplace(tex_key, loader_pool.load_texture(image_paths[image_index], width));
 
 			for (auto& [loaded_key, ID] : texture_IDs)
 			{
@@ -322,7 +318,7 @@ private:
 		for (int tag_index = page_start_index + 1;; ++tag_index)
 		{
 			page_end_index = tag_index;
-			if (tag_index == tag_indices.size() || tag_page_numbers[tag_index] != page_number)
+			if (static_cast<unsigned int>(tag_index) == tag_indices.size() || tag_page_numbers[tag_index] != page_number)
 				break;
 		}
 
@@ -401,7 +397,7 @@ private:
 	}
 
 public:
-	image_viewer()
+	image_viewer() : loader_pool(4)
 	{
 		if (!glfwInit())
 			fprintf(stderr, "ERROR: could not start GLFW3\n");

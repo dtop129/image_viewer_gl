@@ -1,9 +1,10 @@
 #pragma once
 
 #include <condition_variable>
-#include <functional>
+#include <future>
 #include <mutex>
-#include <queue>
+#include <stack>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -13,60 +14,78 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-
 struct image_data
 {
 	std::vector<uint8_t> pixels;
 	glm::ivec2 size;
 };
 
-image_data load_image(const std::string& path, int desired_width)
+class texture_load_thread
 {
-	image_data data;
+private:
+	std::vector<std::jthread> worker_threads;
 
-	int width, height;
-	uint8_t* pixels = stbi_load(path.c_str(), &width, &height, nullptr, 3);
+	std::stack<std::tuple<std::string, int, std::promise<image_data>>> requests;
 
-	int desired_height = height * desired_width / width;
-	data.size = {desired_width, desired_height};
-	std::vector<uint8_t> resized_pixels(desired_width * desired_height * 3);
+	std::mutex mutex;
+	std::condition_variable cv;
+	bool stop = false;
 
-	avir::CLancIR resizer;
-	resizer.resizeImage(pixels, width, height, resized_pixels.data(), desired_width, desired_height, 3);
-
-	data.pixels.reserve(desired_width * desired_height * 4);
-	for (int i = 0; i < resized_pixels.size(); i+=3)
+	void loader()
 	{
-		data.pixels.push_back(resized_pixels[i]);
-		data.pixels.push_back(resized_pixels[i+1]);
-		data.pixels.push_back(resized_pixels[i+2]);
-		data.pixels.push_back(0);
+		avir::CLancIR resizer;
+
+		while (true)
+		{
+			std::unique_lock lk(mutex);
+			if (requests.empty())
+				cv.wait(lk, [this]{ return !requests.empty() || stop; });
+			if (stop)
+				return;
+
+			auto[req_path, req_width, promise] = std::move(requests.top());
+			requests.pop();
+			lk.unlock();
+
+			int width, height;
+			uint8_t* pixels = stbi_load(req_path.c_str(), &width, &height, nullptr, 4);
+			int req_height = height * req_width / width;
+
+			image_data data;
+			data.size = {req_width, req_height};
+			data.pixels.resize(req_width * req_height * 4);
+			resizer.resizeImage(pixels, width, height, data.pixels.data(), req_width, req_height, 4);
+
+			promise.set_value(std::move(data));
+			stbi_image_free(pixels);
+		}
+	}
+public:
+	texture_load_thread(unsigned int n_workers)
+	{
+		for (int i = 0; i < n_workers; ++i)
+			worker_threads.emplace_back([this]{ loader(); });
 	}
 
-	stbi_image_free(pixels);
+	~texture_load_thread()
+	{
+		{
+			std::scoped_lock lk(mutex);
+			stop = true;
+		}
+		cv.notify_all();
+	}
 
-	return data;
-}
+	std::future<image_data> load_texture(const std::string& path, int width)
+	{
+		auto request = std::tuple(path, width, std::promise<image_data>());
+		auto future = std::get<2>(request).get_future();
+		{
+			std::scoped_lock lock(mutex);
+			requests.emplace(std::move(request));
+		}
 
-//class texture_load_thread
-//{
-//private:
-//	std::jthread worker;
-//
-//	std::queue<std::function<void()>> tasks;
-//	std::mutex tasks_mutex;
-//	std::condition_variable cv;
-//
-//	void worker()
-//	{
-//		while (true)
-//		{
-//
-//		}
-//	}
-//public:
-//	texture_load_thread()
-//	{
-//		worker = std::jthread()
-//	}
-//};
+		cv.notify_one();
+		return future;
+	}
+};
