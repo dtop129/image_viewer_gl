@@ -13,7 +13,6 @@
 #include <unordered_map>
 
 #include "shader.h"
-#include "repaging.h"
 #include "loader_thread.h"
 
 void message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, GLchar const* message, void const* user_param)
@@ -64,12 +63,15 @@ private:
 	GLuint null_vaoID;
 	GLuint white_texID;
 	shader_program program;
-	std::unordered_map<int, std::future<image_data>> loading_texdata;
 	std::unordered_map<int, GLuint> texture_IDs;  //map {image_index, texture width(scale)} -> gl ID
+	std::unordered_map<int, std::future<image_data>> loading_texdata;
 	std::unordered_map<int, bool> texture_used; //same as prev {} -> used flag
 
 	std::vector<std::string> image_paths;
 	std::vector<glm::ivec2> image_sizes;
+	std::vector<int> image_types;
+	std::unordered_map<int, std::vector<std::pair<int, std::future<int>>>> loading_image_types;
+
 	std::map<int, std::vector<int>> tags_indices; //tag -> vector of indices pointing to image_paths/image_sizes
 	std::unordered_map<int, std::vector<int>> page_numbers; //tag -> vector of indices(referring to tags_indices) indicating the page index
 
@@ -207,14 +209,23 @@ private:
 					continue;
 				}
 
-				tag_indices.push_back(image_paths.size());
-				image_paths.emplace_back(image_path);
+				int image_index = image_paths.size();
+
+				tag_indices.push_back(image_index);
+				image_paths.push_back(image_path);
 				image_sizes.push_back(size);
+				if (size.x > size.y * 0.8)
+					image_types.push_back(4); //100 in binary
+				else
+				{
+					image_types.push_back(0);
+					loading_image_types[tag].emplace_back(image_index, loader_pool.get_image_type(image_path));
+				}
 
 				if (curr_image_pos.tag == -1)
 				{
 					curr_image_pos.tag = tag;
-					curr_image_pos.tag_index = tag_indices.back();
+					curr_image_pos.tag_index = image_index;
 				}
 			}
 
@@ -383,8 +394,52 @@ private:
 		//std::cout << loading_texdata.size() << " " << texture_IDs.size() << std::endl;
 	}
 
+	std::vector<int> get_page_numbers(const std::vector<int>& indices)
+	{
+		std::vector<int> tag_page_numbers;
+		int page_index = -1;
+
+		for (unsigned int i = 0; i < indices.size(); i++)
+		{
+			//if (i % 2 == 0)
+				page_index++;
+
+			tag_page_numbers.push_back(page_index);
+		}
+
+		return tag_page_numbers;
+	}
+
+	void check_paging_updates(int tag)
+	{
+		auto loading_types_it = loading_image_types.find(tag);
+		if (loading_types_it == loading_image_types.end())
+			return;
+
+		auto& loading_types = loading_types_it->second;
+
+		bool update = false;
+		for (auto&[image_index, future] : loading_types)
+		{
+			if (future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+			{
+				image_types[image_index] = future.get();
+				update = true;
+			}
+		}
+		loading_types.erase(std::remove_if(loading_types.begin(), loading_types.end(),
+							   [](auto& val){ return !val.second.valid(); }), loading_types.end());
+
+		if (update)
+		{
+			page_numbers[tag] = get_page_numbers(tags_indices[tag]);
+		}
+	}
+
 	void render()
 	{
+		check_paging_updates(curr_image_pos.tag);
+
 		for (auto[image_index, size_offset] : page_render_data(curr_image_pos))
 		{
 			glBindTextureUnit(0, get_texture(image_index, size_offset.x));
@@ -406,7 +461,7 @@ public:
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-		window = glfwCreateWindow(800, 600, "PBO test", NULL, NULL);
+		window = glfwCreateWindow(800, 600, "image viewer", NULL, NULL);
 		if (!window) {
 			fprintf(stderr, "ERROR: could not open window with GLFW3\n");
 			glfwTerminate();
