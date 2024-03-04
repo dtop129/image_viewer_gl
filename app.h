@@ -199,6 +199,10 @@ private:
 			int tag = std::stoi(args[0]);
 			auto& tag_indices = tags_indices[tag];
 
+			int prev_curr_image_index = -1;
+			if (!tag_indices.empty() && tag == curr_image_pos.tag)
+				prev_curr_image_index = tag_indices[curr_image_pos.tag_index];
+
 			for (auto image_path : args | std::views::drop(1))
 			{
 				glm::ivec2 size;
@@ -229,14 +233,21 @@ private:
 				{
 					curr_image_pos.tag = tag;
 					curr_image_pos.tag_index = image_index;
+					prev_curr_image_index = image_index;
 				}
+			}
+			if (!tag_indices.empty() && tag == curr_image_pos.tag)
+			{
+				std::sort(tag_indices.begin(), tag_indices.end(), [this](int idx1, int idx2)
+						{ return image_paths[idx1] < image_paths[idx2]; });
+				curr_image_pos.tag_index = std::find(tag_indices.begin(), tag_indices.end(), prev_curr_image_index)
+												- tag_indices.begin();
 			}
 
 			if (tag_indices.empty())
 				tags_indices.erase(tag);
 			else
 				page_numbers[tag] = get_page_numbers(tag_indices);
-
 		}
 		else if (type == "goto_offset")
 		{
