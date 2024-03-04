@@ -70,8 +70,8 @@ private:
 	std::vector<std::string> image_paths;
 	std::vector<glm::ivec2> image_sizes;
 	std::vector<int> image_types;
-	std::unordered_map<int, std::vector<std::pair<int, std::future<int>>>> loading_image_types;
 
+	std::unordered_map<int, std::vector<std::pair<int, std::future<int>>>> loading_image_types;
 	std::map<int, std::vector<int>> tags_indices; //tag -> vector of indices pointing to image_paths/image_sizes
 	std::unordered_map<int, std::vector<int>> page_numbers; //tag -> vector of indices(referring to tags_indices) indicating the page index
 
@@ -194,7 +194,7 @@ private:
 			args_str = args_str.substr(comma_pos + 1);
 		} while (comma_pos != std::string_view::npos);
 
-		if (type == "add_image")
+		if (type == "add_images")
 		{
 			int tag = std::stoi(args[0]);
 			auto& tag_indices = tags_indices[tag];
@@ -203,7 +203,7 @@ private:
 			if (!tag_indices.empty() && tag == curr_image_pos.tag)
 				prev_curr_image_index = tag_indices[curr_image_pos.tag_index];
 
-			for (auto image_path : args | std::views::drop(1))
+			for (const auto& image_path : args | std::views::drop(1))
 			{
 				glm::ivec2 size;
 				int ok = stbi_info(image_path.c_str(), &size.x, &size.y, nullptr);
@@ -249,6 +249,35 @@ private:
 			else
 				page_numbers[tag] = get_page_numbers(tag_indices);
 		}
+		else if (type == "remove_tag")
+		{
+			int tag = std::stoi(args[0]);
+			auto tag_it = tags_indices.find(tag);
+			if (tag_it == tags_indices.end())
+			{
+				std::cerr << "tag " << tag << " not present" << std::endl;
+				return;
+			}
+
+			if (tag == curr_image_pos.tag)
+			{
+				auto new_tag_it = std::next(tag_it);
+				if (new_tag_it == tags_indices.end())
+				{
+					if (tag_it == tags_indices.begin())
+						curr_image_pos = {-1, -1};
+					else
+						new_tag_it = std::prev(tag_it);
+				}
+
+				if (curr_image_pos.tag_index != -1)
+					curr_image_pos = {new_tag_it->first, 0};
+			}
+
+			tags_indices.erase(tag_it);
+			loading_image_types.erase(tag);
+			page_numbers.erase(tag);
+		}
 		else if (type == "goto_offset")
 		{
 			int offset = std::stoi(args[0]);
@@ -258,7 +287,7 @@ private:
 
 	void handle_stdin()
 	{
-		if (std::cin.rdbuf()->in_avail())
+		while (std::cin.rdbuf()->in_avail())
 		{
 			std::string cmd;
 			std::getline(std::cin, cmd);
