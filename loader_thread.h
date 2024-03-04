@@ -23,6 +23,9 @@ struct image_data
 };
 
 int get_texture_pageside(uint8_t* pixels, int w, int h) {
+	if (w > 0.8 * h)
+		return 3;
+
 	// change to greyscale column major
 	std::vector<uint8_t> pixels_cm;
 	pixels_cm.reserve(w * h);
@@ -64,7 +67,9 @@ class texture_load_thread
 private:
 	std::vector<std::jthread> worker_threads;
 
-	std::deque<std::tuple<std::string, int, std::promise<image_data>, std::promise<int>>> requests;
+	using req_type = std::tuple<std::string, int, std::promise<image_data>, std::promise<glm::ivec2>, std::promise<int>>;
+
+	std::deque<req_type> requests;
 
 	std::mutex mutex;
 	std::condition_variable cv;
@@ -82,14 +87,21 @@ private:
 			if (stop)
 				return;
 
-			auto[req_path, req_width, pixel_pr, type_pr] = std::move(requests.back());
+			auto[req_path, req_width, pixel_pr, size_pr, type_pr] = std::move(requests.back());
 			requests.pop_back();
 			lk.unlock();
 
 			int width, height;
+			if (req_width == -1)
+			{
+				stbi_info(req_path.c_str(), &width, &height, nullptr);
+				size_pr.set_value({width, height});
+				continue;
+			}
+
 			uint8_t* pixels = stbi_load(req_path.c_str(), &width, &height, nullptr, 4);
 
-			if (req_width == -1)
+			if (req_width == -2)
 				type_pr.set_value(get_texture_pageside(pixels, width, height));
 			else
 			{
@@ -106,6 +118,26 @@ private:
 			stbi_image_free(pixels);
 		}
 	}
+
+	template<int n_pr>
+	auto add_request(const std::string& path, int width)
+	{
+		req_type request;
+		std::get<0>(request) = path;
+		std::get<1>(request) = width;
+		auto future = std::get<2 + n_pr>(request).get_future();
+		{
+			std::scoped_lock lock(mutex);
+			if (width > 0)
+				requests.push_back(std::move(request));
+			else
+				requests.push_front(std::move(request));
+		}
+
+		cv.notify_one();
+		return future;
+	}
+
 public:
 	texture_load_thread(unsigned int n_workers)
 	{
@@ -124,28 +156,14 @@ public:
 
 	std::future<image_data> load_texture(const std::string& path, int width)
 	{
-		auto request = std::tuple(path, width, std::promise<image_data>(), std::promise<int>());
-		auto future = std::get<2>(request).get_future();
-		{
-			std::scoped_lock lock(mutex);
-			requests.push_back(std::move(request));
-		}
-
-		cv.notify_one();
-		return future;
+		return add_request<0>(path, width);
 	}
-
-	//BY DEFAULT IMAGE TYPE TASKS ARE GIVEN THE LOWEST PRIORITY
+	std::future<glm::ivec2> get_image_size(const std::string& path)
+	{
+		return add_request<1>(path, -1);
+	}
 	std::future<int> get_image_type(const std::string& path)
 	{
-		auto request = std::tuple(path, -1, std::promise<image_data>(), std::promise<int>());
-		auto future = std::get<3>(request).get_future();
-		{
-			std::scoped_lock lock(mutex);
-			requests.push_front(std::move(request));
-		}
-
-		cv.notify_one();
-		return future;
+		return add_request<2>(path, -2);
 	}
 };

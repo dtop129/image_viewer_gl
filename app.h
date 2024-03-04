@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <ranges>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <map>
@@ -69,6 +70,7 @@ private:
 
 	std::vector<std::string> image_paths;
 	std::vector<glm::ivec2> image_sizes;
+	std::vector<std::future<glm::ivec2>> loading_image_sizes;
 	std::vector<int> image_types;
 
 	std::unordered_map<int, std::vector<std::pair<int, std::future<int>>>> loading_image_types;
@@ -205,11 +207,9 @@ private:
 
 			for (const auto& image_path : args | std::views::drop(1))
 			{
-				glm::ivec2 size;
-				int ok = stbi_info(image_path.c_str(), &size.x, &size.y, nullptr);
-				if (!ok)
+				if (!std::filesystem::exists(image_path))
 				{
-					std::cerr << "error loading " << image_path << std::endl;
+					std::cerr << image_path << " not found" << std::endl;
 					continue;
 				}
 
@@ -217,17 +217,15 @@ private:
 
 				tag_indices.push_back(image_index);
 				image_paths.push_back(image_path);
-				image_sizes.push_back(size);
-				if (size.x > size.y * 0.8)
-					image_types.push_back(3); //011 in binary
-				else
-				{
-					//for debug
-					//auto fut = loader_pool.get_image_type(image_path);
-					//image_types.push_back(fut.get());
-					image_types.push_back(0);
-					loading_image_types[tag].emplace_back(image_index, loader_pool.get_image_type(image_path));
-				}
+
+				image_sizes.emplace_back();
+				loading_image_sizes.push_back(loader_pool.get_image_size(image_path));
+				//to load types in blocking way, for debug
+				//auto fut = loader_pool.get_image_type(image_path);
+				//image_types.push_back(fut.get());
+				image_types.emplace_back();
+				loading_image_types[tag].emplace_back(image_index, loader_pool.get_image_type(image_path));
+
 
 				if (curr_image_pos.tag == -1)
 				{
@@ -344,7 +342,27 @@ private:
 		return texID;
 	}
 
-	std::vector<std::pair<int, glm::ivec4>> page_render_data(image_pos pos) const
+	//this must block,
+	glm::ivec2 get_image_size(int image_index)
+	{
+		auto& future = loading_image_sizes[image_index];
+		if (future.valid())
+		{
+			if (future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+				image_sizes[image_index] = future.get();
+			else
+			{
+				glm::ivec2 size;
+				stbi_info(image_paths[image_index].c_str(), &size.x, &size.y, nullptr);
+				image_sizes[image_index] = size;
+				future = std::future<glm::ivec2>();
+			}
+		}
+
+		return image_sizes[image_index];
+	}
+
+	std::vector<std::pair<int, glm::ivec4>> page_render_data(image_pos pos)
 	{
 		auto tag_indices_it = tags_indices.find(pos.tag);
 		if (tag_indices_it == tags_indices.end())
@@ -376,12 +394,12 @@ private:
 				break;
 		}
 
-		int start_height = image_sizes[tag_indices[page_start_index]].y;
+		int start_height = get_image_size(tag_indices[page_start_index]).y;
 		glm::vec2 rect_size(0, start_height);
 
 		for (int tag_index = page_start_index; tag_index < page_end_index; ++tag_index)
 		{
-			glm::ivec2 image_size = image_sizes[tag_indices[tag_index]];
+			glm::ivec2 image_size = get_image_size(tag_indices[tag_index]);
 			rect_size.x += image_size.x * start_height / image_size.y;
 		}
 
@@ -396,7 +414,7 @@ private:
 		int running_offset = 0;
 		for (int tag_index = page_end_index - 1; tag_index >= page_start_index; --tag_index)
 		{
-			glm::ivec2 image_size = image_sizes[tag_indices[tag_index]];
+			glm::ivec2 image_size = get_image_size(tag_indices[tag_index]);
 			int scaled_width = image_size.x * scaled_size.y / image_size.y;
 
 			sizes_offsets.emplace_back(tag_indices[tag_index], glm::ivec4(scaled_width, scaled_size.y, offset.x + running_offset, offset.y));
