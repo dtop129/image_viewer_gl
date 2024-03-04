@@ -247,13 +247,19 @@ private:
 			else
 				page_numbers[tag] = get_page_numbers(tag_indices);
 		}
-		else if (type == "remove_tag")
+		else if (type == "goto_tag" || type == "remove_tag")
 		{
 			int tag = std::stoi(args[0]);
 			auto tag_it = tags_indices.find(tag);
 			if (tag_it == tags_indices.end())
 			{
 				std::cerr << "tag " << tag << " not present" << std::endl;
+				return;
+			}
+
+			if (type == "goto_tag")
+			{
+				curr_image_pos = {tag, 0};
 				return;
 			}
 
