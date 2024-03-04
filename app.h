@@ -408,8 +408,11 @@ private:
 		{
 			if (i == indices.size() || image_types[indices[i]] == 3)
 			{
-				if (i < indices.size() && (i - 1 - start) % 2 == 0)
+				if (i < indices.size() && (i - start) % 2 == 1)
+					first_alone_score++;
+				else if (i < indices.size())
 					first_alone_score--;
+
 				bool first_alone = first_alone_score > 0;
 				for (unsigned int j = start; j < i; ++j)
 				{
@@ -422,16 +425,16 @@ private:
 					tag_page_numbers[i] = ++page_index;
 
 				start = i + 1;
-				first_alone_score = -1;
+				first_alone_score = 0;
 				continue;
 			}
 
 			int type = image_types[indices[i]];
 
-			first_alone_score -= (type == 1) && (i % 2 == 0);
-			first_alone_score += (type == 1) && (i % 2 == 1);
-			first_alone_score += (type == 2) && (i % 2 == 0);
-			first_alone_score -= (type == 2) && (i % 2 == 1);
+			first_alone_score -= (type == 1) && ((i - start) % 2 == 0);
+			first_alone_score += (type == 1) && ((i - start) % 2 == 1);
+			first_alone_score += (type == 2) && ((i - start) % 2 == 0);
+			first_alone_score -= (type == 2) && ((i - start) % 2 == 1);
 		}
 
 		return tag_page_numbers;
