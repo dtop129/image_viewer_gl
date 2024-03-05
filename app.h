@@ -38,6 +38,7 @@ private:
 	std::vector<std::future<glm::ivec2>> loading_image_sizes;
 	std::vector<int> image_types;
 	std::vector<bool> image_removed;
+	std::vector<bool> paging_invert;
 
 	//tags maps
 	std::map<int, std::vector<int>> tags_indices; //tag -> vector of indices pointing to image vectors
@@ -174,6 +175,13 @@ void main()
 				case GLFW_KEY_I:
 					std::cout << "getinfo" << std::endl;
 					break;
+				case GLFW_KEY_R:
+					if (curr_image_pos.tag_index != -1)
+					{
+						paging_invert[tags_indices[curr_image_pos.tag][curr_image_pos.tag_index]] = !paging_invert[tags_indices[curr_image_pos.tag][curr_image_pos.tag_index]];
+						update_tag_pages[curr_image_pos.tag] = 1;
+					}
+					break;
 			}
 	}
 
@@ -219,10 +227,11 @@ void main()
 					image_removed.push_back(false);
 					image_paths.push_back(image_path);
 
-					image_sizes.emplace_back();
+					image_sizes.emplace_back(0, 0);
 					loading_image_sizes.push_back(loader_pool.get_image_size(image_path));
-					image_types.emplace_back();
+					image_types.push_back(0);
 					loading_image_types[tag].emplace_back(image_index, loader_pool.get_image_type(image_path));
+					paging_invert.push_back(false);
 				}
 				else if (image_removed[image_index])
 					image_removed[image_index] = false;
@@ -496,6 +505,7 @@ void main()
 
 		int start = 0;
 		int first_alone_score = 0;
+		bool invert_alone = false;
 		for (unsigned int i = 0; i <= indices.size(); ++i)
 		{
 			if (i == indices.size() || image_types[indices[i]] == 3)
@@ -503,17 +513,19 @@ void main()
 				first_alone_score += (i < indices.size()) && ((i - start) % 2 == 1);
 				first_alone_score -= (i < indices.size()) && ((i - start) % 2 == 0);
 
-				bool first_alone = first_alone_score > 0;
+				bool first_alone = (first_alone_score > 0) ^ invert_alone;
 
 				tag_page_starts[start] = start;
 				int page_start = start;
-				for (unsigned int j = start + 1; j < i; ++j)
+				for (unsigned int j = start; j < i; ++j)
 				{
-					if ((j - start) % 2 == first_alone)
+					if ((j - start) % 2 == first_alone || j == start)
 						page_start = j;
 
 					tag_page_starts[j] = page_start;
 				}
+				if (i != indices.size())
+					tag_page_starts[i] = i;
 
 				start = i + 1;
 				first_alone_score = 0;
@@ -526,6 +538,8 @@ void main()
 			first_alone_score += (type == 1) && ((i - start) % 2 == 1);
 			first_alone_score += (type == 2) && ((i - start) % 2 == 0);
 			first_alone_score -= (type == 2) && ((i - start) % 2 == 1);
+			if (paging_invert[indices[i]])
+				invert_alone = !invert_alone;
 		}
 
 		return tag_page_starts;
