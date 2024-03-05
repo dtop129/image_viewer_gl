@@ -60,47 +60,30 @@ private:
 		vertical
 	} curr_view_mode;
 
-	image_pos advance_pos(image_pos pos, int dir)
+	image_pos advance_page(image_pos pos, int dir)
 	{
 		auto tag_it = tags_indices.find(pos.tag);
 		if (tag_it == tags_indices.end())
 			return {-1, -1};
 
-		int tag_size = tag_it->second.size();
-		pos.tag_index += dir;
-		if (pos.tag_index == -1 || pos.tag_index == tag_size)
-		{
-			if ((dir > 0 && std::next(tag_it) == tags_indices.end()) ||
-					(dir < 0 && tag_it == tags_indices.begin()))
-				pos.tag_index -= dir;
-			else
-			{
-				std::advance(tag_it, dir);
-				pos.tag = tag_it->first;
-				pos.tag_index = dir > 0 ? 0 : tag_it->second.size() - 1;
-			}
-		}
+		const auto& tag_page_starts = get_page_start_indices(pos.tag);
 
-		return pos;
-	}
-
-	image_pos advance_page(image_pos pos, int dir)
-	{
-		if (pos.tag_index == -1)
-			return {-1, -1};
-
-		int initial_page_start = get_page_start_indices(pos.tag)[pos.tag_index];
+		image_pos start_pos = pos;
+		int initial_page_start = tag_page_starts[pos.tag_index];
 		int page_start = initial_page_start;
 		while (initial_page_start == page_start)
 		{
-			image_pos new_pos = advance_pos(pos, dir);
-			if (new_pos.tag == pos.tag && new_pos.tag_index == pos.tag_index)
-				return new_pos;
-			else if (new_pos.tag != pos.tag)
-				return new_pos;
+			pos.tag_index += dir;
+			if (pos.tag_index == tag_it->second.size() || pos.tag_index == -1)
+			{
+				if ((dir > 0 && std::next(tag_it) == tags_indices.end()) ||
+						(dir < 0 && tag_it == tags_indices.begin()))
+					return start_pos;
 
-			page_start = get_page_start_indices(new_pos.tag)[new_pos.tag_index];
-			pos = new_pos;
+				std::advance(tag_it, dir);
+				return {tag_it->first, int(dir > 0 ? 0 : tag_it->second.size() - 1)};
+			}
+			page_start = tag_page_starts[pos.tag_index];
 		}
 
 		return pos;
@@ -467,7 +450,7 @@ void main()
 				texture_used[tex_key] = true;
 
 				if (texture_IDs.contains(tex_key) || loading_texdata.contains(tex_key))
-					return;
+					continue;
 
 				loading_texdata.emplace(tex_key, loader_pool.load_texture(image_paths[preload_image_index], size_offset.x));
 			}
