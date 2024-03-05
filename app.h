@@ -84,13 +84,12 @@ private:
 				std::advance(tag_it, dir);
 				pos = {tag_it->first, int(dir > 0 ? 0 : tag_it->second.size() - 1)};
 				page_start = get_page_start_indices(pos.tag)[pos.tag_index];
-				pos.tag_index = page_start;
-				return pos;
+				break;
 			}
 			page_start = tag_page_starts[pos.tag_index];
 		}
 
-		return pos;
+		return {pos.tag, page_start}; //always advance up to the beginning of the page
 	}
 
 	int texture_key(int image_index, int width) const
