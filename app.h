@@ -37,6 +37,7 @@ private:
 	std::vector<glm::ivec2> image_sizes;
 	std::vector<std::future<glm::ivec2>> loading_image_sizes;
 	std::vector<int> image_types;
+	std::vector<bool> image_removed;
 
 	//tags maps
 	std::map<int, std::vector<int>> tags_indices; //tag -> vector of indices pointing to image vectors
@@ -185,25 +186,28 @@ private:
 					std::cerr << image_path << " not found" << std::endl;
 					continue;
 				}
-				if (std::find(image_paths.begin(), image_paths.end(), image_path)
-						!= image_paths.end())
+
+				int image_index = std::find(image_paths.begin(), image_paths.end(), image_path) - image_paths.begin();
+
+				if (image_index == image_paths.size())
+				{
+					image_removed.push_back(false);
+					image_paths.push_back(image_path);
+
+					image_sizes.emplace_back();
+					loading_image_sizes.push_back(loader_pool.get_image_size(image_path));
+					image_types.emplace_back();
+					loading_image_types[tag].emplace_back(image_index, loader_pool.get_image_type(image_path));
+				}
+				else if (image_removed[image_index])
+					image_removed[image_index] = false;
+				else
 				{
 					std::cerr << image_path << " already present" << std::endl;
 					continue;
 				}
 
-				int image_index = image_paths.size();
-
 				tag_indices.push_back(image_index);
-				image_paths.push_back(image_path);
-
-				image_sizes.emplace_back();
-				loading_image_sizes.push_back(loader_pool.get_image_size(image_path));
-				//to load types in blocking way, for debug
-				//auto fut = loader_pool.get_image_type(image_path);
-				//image_types.push_back(fut.get());
-				image_types.emplace_back();
-				loading_image_types[tag].emplace_back(image_index, loader_pool.get_image_type(image_path));
 
 				if (curr_image_pos.tag_index == -1)
 				{
@@ -255,6 +259,9 @@ private:
 				if (curr_image_pos.tag_index != -1)
 					curr_image_pos = {new_tag_it->first, 0};
 			}
+
+			for (auto image_index : tag_it->second)
+				image_removed[image_index] = true;
 
 			tags_indices.erase(tag_it);
 			loading_image_types.erase(tag);
