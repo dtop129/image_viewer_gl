@@ -25,16 +25,20 @@ private:
 	GLuint null_vaoID;
 	GLuint white_texID;
 	shader_program program;
-	std::unordered_map<int, GLuint> texture_IDs;  //map {image_index, texture width(scale)} -> gl ID
-	std::unordered_map<int, std::future<image_data>> loading_texdata;
-	std::unordered_map<int, bool> texture_used; //same as prev {} -> used flag
 
+	//key for following maps is texture_key(image_index, texture)
+	std::unordered_map<int, GLuint> texture_IDs;
+	std::unordered_map<int, std::future<image_data>> loading_texdata;
+	std::unordered_map<int, bool> texture_used;
+
+	//images vectors
 	std::vector<std::string> image_paths;
 	std::vector<glm::ivec2> image_sizes;
 	std::vector<std::future<glm::ivec2>> loading_image_sizes;
 	std::vector<int> image_types;
 
-	std::map<int, std::vector<int>> tags_indices; //tag -> vector of indices pointing to image_paths/image_sizes
+	//tags maps
+	std::map<int, std::vector<int>> tags_indices; //tag -> vector of indices pointing to image vectors
 	std::unordered_map<int, std::vector<std::pair<int, std::future<int>>>> loading_image_types;
 	std::unordered_map<int, std::vector<int>> page_numbers; //tag -> vector of indices(referring to tags_indices) indicating the page index
 
