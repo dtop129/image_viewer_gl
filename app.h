@@ -85,6 +85,9 @@ private:
 
 	image_pos advance_page(image_pos pos, int dir)
 	{
+		if (pos.tag_index == -1)
+			return {-1, -1};
+
 		int initial_page_start = get_page_start_indices(pos.tag)[pos.tag_index];
 		int page_start = initial_page_start;
 		while (initial_page_start == page_start)
@@ -297,17 +300,6 @@ private:
 		}
 	}
 
-	void preload_texdata(int image_index, int width)
-	{
-		int tex_key = texture_key(image_index, width);
-		texture_used[tex_key] = true;
-
-		if (texture_IDs.contains(tex_key) || loading_texdata.contains(tex_key))
-			return;
-
-		loading_texdata.emplace(tex_key, loader_pool.load_texture(image_paths[image_index], width));
-	}
-
 	GLuint get_texture(int image_index, int width)
 	{
 		int tex_key = texture_key(image_index, width);
@@ -428,7 +420,15 @@ private:
 	{
 		for (auto preload_offset : {1, -1})
 			for (auto[preload_image_index, size_offset] : page_render_data(advance_page(curr_image_pos, preload_offset)))
-				preload_texdata(preload_image_index, size_offset.x);
+			{
+				int tex_key = texture_key(preload_image_index, size_offset.x);
+				texture_used[tex_key] = true;
+
+				if (texture_IDs.contains(tex_key) || loading_texdata.contains(tex_key))
+					return;
+
+				loading_texdata.emplace(tex_key, loader_pool.load_texture(image_paths[preload_image_index], size_offset.x));
+			}
 
 		for (auto it = texture_used.begin(); it != texture_used.end();)
 		{
