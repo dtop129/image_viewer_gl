@@ -197,8 +197,7 @@ private:
 				image_types.emplace_back();
 				loading_image_types[tag].emplace_back(image_index, loader_pool.get_image_type(image_path));
 
-
-				if (curr_image_pos.tag == -1)
+				if (curr_image_pos.tag_index == -1)
 				{
 					curr_image_pos.tag = tag;
 					curr_image_pos.tag_index = image_index;
