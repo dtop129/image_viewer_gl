@@ -81,7 +81,10 @@ private:
 					return start_pos;
 
 				std::advance(tag_it, dir);
-				return {tag_it->first, int(dir > 0 ? 0 : tag_it->second.size() - 1)};
+				pos = {tag_it->first, int(dir > 0 ? 0 : tag_it->second.size() - 1)};
+				page_start = get_page_start_indices(pos.tag)[pos.tag_index];
+				pos.tag_index = page_start;
+				return pos;
 			}
 			page_start = tag_page_starts[pos.tag_index];
 		}
@@ -149,21 +152,29 @@ void main()
 
 	void on_key(int key, int action)
 	{
-		if (action != GLFW_PRESS && action != GLFW_REPEAT)
-			return;
-
-		switch (key)
-		{
-			case GLFW_KEY_SPACE:
-				curr_image_pos = advance_page(curr_image_pos, 1);
-				break;
-			case GLFW_KEY_BACKSPACE:
-				curr_image_pos = advance_page(curr_image_pos, -1);
-				break;
-			case GLFW_KEY_Q:
-				glfwSetWindowShouldClose(window, true);
-				break;
-		}
+		if (action == GLFW_PRESS || action == GLFW_REPEAT)
+			switch (key)
+			{
+				case GLFW_KEY_SPACE:
+					curr_image_pos = advance_page(curr_image_pos, 1);
+					break;
+				case GLFW_KEY_BACKSPACE:
+					curr_image_pos = advance_page(curr_image_pos, -1);
+					break;
+			}
+		if (action == GLFW_PRESS)
+			switch (key)
+			{
+				case GLFW_KEY_Q:
+					glfwSetWindowShouldClose(window, true);
+					break;
+				case GLFW_KEY_C:
+					std::cout << "changechapter" << std::endl;
+					break;
+				case GLFW_KEY_I:
+					std::cout << "getinfo" << std::endl;
+					break;
+			}
 	}
 
 	void execute_cmd(std::string_view cmd)
@@ -279,11 +290,6 @@ void main()
 			loading_image_types.erase(tag);
 			page_start_indices.erase(tag);
 			update_tag_pages.erase(tag);
-		}
-		else if (type == "goto_offset")
-		{
-			int offset = std::stoi(args[0]);
-			curr_image_pos = advance_page(curr_image_pos, offset);
 		}
 		else if (type == "change_mode")
 		{
