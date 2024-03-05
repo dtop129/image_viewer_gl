@@ -1,6 +1,5 @@
 #include <GL/gl3w.h>
 
-#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -9,24 +8,20 @@ class shader_program
 private:
 	GLuint programID;
 
-	GLuint get_shader(GLenum type, const std::string& path) {
+	GLuint get_shader(GLenum type, const std::string& code) {
 		GLuint shader;
+		const char* str = code.c_str();
 		shader = glCreateShader(type);
-
-		std::ifstream ifs(path);
-		std::string content((std::istreambuf_iterator<char>(ifs)),
-							(std::istreambuf_iterator<char>()));
-		const char* str = content.c_str();
 		glShaderSource(shader, 1, &str, NULL);
 		glCompileShader(shader);
 		return shader;
 	}
 
 public:
-	void init(const std::string& vertex_path, const std::string& fragment_path)
+	void init(const std::string& vertex_code, const std::string& fragment_code)
 	{
-		GLuint vertexID = get_shader(GL_VERTEX_SHADER, vertex_path);
-		GLuint fragmentID = get_shader(GL_FRAGMENT_SHADER, fragment_path);
+		GLuint vertexID = get_shader(GL_VERTEX_SHADER, vertex_code);
+		GLuint fragmentID = get_shader(GL_FRAGMENT_SHADER, fragment_code);
 
 		programID = glCreateProgram();
 		glAttachShader(programID, vertexID);
@@ -38,7 +33,7 @@ public:
 		if (!success) {
 			char log[512];
 			glGetProgramInfoLog(programID, 512, NULL, log);
-			std::cout << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n"
+			std::cerr << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n"
 					  << log << std::endl;
 			throw "shader error";
 		}

@@ -96,6 +96,8 @@ private:
 			image_pos new_pos = advance_pos(pos, dir);
 			if (new_pos.tag == pos.tag && new_pos.tag_index == pos.tag_index)
 				return new_pos;
+			else if (new_pos.tag != pos.tag)
+				return new_pos;
 
 			page_start = get_page_start_indices(new_pos.tag)[new_pos.tag_index];
 			pos = new_pos;
@@ -113,7 +115,36 @@ private:
 	{
 		glCreateVertexArrays(1, &null_vaoID);
 
-		program.init("shaders/vert.glsl", "shaders/frag.glsl");
+		const std::string vert_shader= R"(
+#version 460 core
+
+out vec2 fs_texcoords;
+
+layout(location = 0) uniform mat4 proj;
+layout(location = 1) uniform vec2 tex_pos;
+layout(location = 2) uniform vec2 tex_size;
+
+void main()
+{
+	const vec2 pos_arr[4] = {{0.0, 0.0}, {0.0, 1.0}, {1.0, 0.0}, {1.0, 1.0}};
+	vec2 pos = pos_arr[gl_VertexID];
+	fs_texcoords = pos;
+	gl_Position = proj * vec4(pos * tex_size + tex_pos, 0.0, 1.0);
+})";
+
+		const std::string frag_shader= R"(
+#version 460 core
+in vec2 fs_texcoords;
+out vec4 frag_color;
+
+uniform sampler2D tex;
+
+void main()
+{
+    frag_color = texture(tex, fs_texcoords);
+})";
+
+		program.init(vert_shader, frag_shader);
 		glm::mat4 proj = glm::ortho(0.f, 800.f, 600.f, 0.f);
 		glProgramUniformMatrix4fv(program.id(), 0, 1, 0, &proj[0][0]);
 		glViewport(0, 0, 800, 600);
@@ -216,13 +247,11 @@ private:
 					prev_curr_image_index = image_index;
 				}
 			}
-			if (!tag_indices.empty() && tag == curr_image_pos.tag)
-			{
-				std::sort(tag_indices.begin(), tag_indices.end(), [this](int idx1, int idx2)
+			std::sort(tag_indices.begin(), tag_indices.end(), [this](int idx1, int idx2)
 						{ return image_paths[idx1] < image_paths[idx2]; });
-				curr_image_pos.tag_index = std::find(tag_indices.begin(), tag_indices.end(), prev_curr_image_index)
-												- tag_indices.begin();
-			}
+
+			if (!tag_indices.empty() && tag == curr_image_pos.tag)
+				curr_image_pos.tag_index = std::find(tag_indices.begin(), tag_indices.end(), prev_curr_image_index) - tag_indices.begin();
 
 			if (tag_indices.empty())
 				tags_indices.erase(tag);
@@ -389,7 +418,7 @@ private:
 			return {};
 
 		const auto& tag_indices = tag_indices_it->second;
-		auto& tag_page_starts = get_page_start_indices(pos.tag);
+		const auto& tag_page_starts = get_page_start_indices(pos.tag);
 
 		int page_start_index = tag_page_starts[pos.tag_index];
 
@@ -469,10 +498,12 @@ private:
 
 	std::vector<int> compute_page_start_indices(const std::vector<int>& indices)
 	{
-		if (curr_view_mode != view_mode::manga)
-			return indices;
-
 		std::vector<int> tag_page_starts(indices.size());
+		if (curr_view_mode != view_mode::manga)
+		{
+			std::iota(tag_page_starts.begin(), tag_page_starts.end(), 0);
+			return tag_page_starts;
+		}
 
 		int start = 0;
 		int first_alone_score = 0;
