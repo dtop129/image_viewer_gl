@@ -41,7 +41,7 @@ private:
 	//tags maps
 	std::map<int, std::vector<int>> tags_indices; //tag -> vector of indices pointing to image vectors
 	std::unordered_map<int, std::vector<std::pair<int, std::future<int>>>> loading_image_types;
-	std::unordered_map<int, std::vector<int>> page_numbers; //tag -> vector of indices(referring to tags_indices) indicating the page index
+	std::unordered_map<int, std::vector<int>> page_start_indices; //tag -> vector of indices(referring to tags_indices) indicating the page index
 	std::unordered_map<int, bool> update_tag_pages;
 
 	std::vector<int> last_image_indices;
@@ -85,15 +85,15 @@ private:
 
 	image_pos advance_page(image_pos pos, int dir)
 	{
-		int start_page_number = get_page_numbers(pos.tag)[pos.tag_index];
-		int page_number = start_page_number;
-		while (start_page_number == page_number)
+		int initial_page_start = get_page_start_indices(pos.tag)[pos.tag_index];
+		int page_start = initial_page_start;
+		while (initial_page_start == page_start)
 		{
 			image_pos new_pos = advance_pos(pos, dir);
 			if (new_pos.tag == pos.tag && new_pos.tag_index == pos.tag_index)
 				return new_pos;
 
-			page_number = get_page_numbers(new_pos.tag)[new_pos.tag_index];
+			page_start = get_page_start_indices(new_pos.tag)[new_pos.tag_index];
 			pos = new_pos;
 		}
 
@@ -255,7 +255,7 @@ private:
 
 			tags_indices.erase(tag_it);
 			loading_image_types.erase(tag);
-			page_numbers.erase(tag);
+			page_start_indices.erase(tag);
 			update_tag_pages.erase(tag);
 		}
 		else if (type == "goto_offset")
@@ -366,15 +366,15 @@ private:
 		return image_sizes[image_index];
 	}
 
-	std::vector<int>& get_page_numbers(int tag)
+	std::vector<int>& get_page_start_indices(int tag)
 	{
 		auto update_pages_it = update_tag_pages.find(tag);
 		if (update_pages_it != update_tag_pages.end())
 		{
-			page_numbers[tag] = compute_page_numbers(tags_indices[tag]);
+			page_start_indices[tag] = compute_page_start_indices(tags_indices[tag]);
 			update_tag_pages.erase(update_pages_it);
 		}
-		return page_numbers[tag];
+		return page_start_indices[tag];
 	}
 
 	std::vector<std::pair<int, glm::ivec4>> page_render_data(image_pos pos)
@@ -384,25 +384,14 @@ private:
 			return {};
 
 		const auto& tag_indices = tag_indices_it->second;
-		auto& tag_page_numbers = get_page_numbers(pos.tag);
+		auto& tag_page_starts = get_page_start_indices(pos.tag);
 
-		int page_number = tag_page_numbers[pos.tag_index];
-		int page_start_index = pos.tag_index;
-		for (int tag_index = page_start_index - 1;; --tag_index)
-		{
-			if (tag_index < 0 || tag_page_numbers[tag_index] != page_number)
+		int page_start_index = tag_page_starts[pos.tag_index];
+
+		int page_end_index;
+		for (page_end_index = page_start_index + 1; page_end_index < tag_indices.size(); ++page_end_index)
+			if (tag_page_starts[page_end_index] != page_start_index)
 				break;
-
-			page_start_index = tag_index;
-		}
-
-		int page_end_index = page_start_index + 1;
-		for (int tag_index = page_start_index + 1;; ++tag_index)
-		{
-			page_end_index = tag_index;
-			if (static_cast<unsigned int>(tag_index) == tag_indices.size() || tag_page_numbers[tag_index] != page_number)
-				break;
-		}
 
 		int start_height = get_image_size(tag_indices[page_start_index]).y;
 		glm::vec2 rect_size(0, start_height);
@@ -465,14 +454,13 @@ private:
 		//std::cout << loading_texdata.size() << " " << texture_IDs.size() << std::endl;
 	}
 
-	std::vector<int> compute_page_numbers(const std::vector<int>& indices)
+	std::vector<int> compute_page_start_indices(const std::vector<int>& indices)
 	{
 		if (curr_view_mode != view_mode::manga)
 			return indices;
 
-		std::vector<int> tag_page_numbers(indices.size());
+		std::vector<int> tag_page_starts(indices.size());
 
-		int page_index = -1;
 		int start = 0;
 		int first_alone_score = 0;
 		for (unsigned int i = 0; i <= indices.size(); ++i)
@@ -485,15 +473,16 @@ private:
 					first_alone_score--;
 
 				bool first_alone = first_alone_score > 0;
+				int page_start = start;
 				for (unsigned int j = start; j < i; ++j)
 				{
 					if ((j - start) % 2 == first_alone || j == start)
-						++page_index;
+						page_start = j;
 
-					tag_page_numbers[j] = page_index;
+					tag_page_starts[j] = page_start;
 				}
 				if (i < indices.size())
-					tag_page_numbers[i] = ++page_index;
+					tag_page_starts[i] = i;
 
 				start = i + 1;
 				first_alone_score = 0;
@@ -508,7 +497,7 @@ private:
 			first_alone_score -= (type == 2) && ((i - start) % 2 == 1);
 		}
 
-		return tag_page_numbers;
+		return tag_page_starts;
 	}
 
 	void check_paging_updates(int tag)
@@ -605,7 +594,7 @@ public:
 		std::ios_base::sync_with_stdio(false);
 		std::cin.tie(NULL);
 
-		curr_view_mode = view_mode::single;
+		curr_view_mode = view_mode::manga;
 	}
 
 	void run()
