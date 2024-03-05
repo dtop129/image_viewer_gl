@@ -61,7 +61,20 @@ private:
 		vertical
 	} curr_view_mode;
 
-	image_pos advance_page(image_pos pos, int dir)
+	void advance_current_pos(int dir)
+	{
+		if (curr_image_pos.tag_index == -1)
+			return;
+
+		image_pos new_pos = advance_pos(curr_image_pos, dir);
+
+		if (new_pos.tag_index == curr_image_pos.tag_index && new_pos.tag == curr_image_pos.tag)
+			std::cout << "last_in_dir=" << dir << std::endl;
+
+		curr_image_pos = new_pos;
+	}
+
+	image_pos advance_pos(image_pos pos, int dir)
 	{
 		auto tag_it = tags_indices.find(pos.tag);
 		if (tag_it == tags_indices.end())
@@ -156,10 +169,10 @@ void main()
 			switch (key)
 			{
 				case GLFW_KEY_SPACE:
-					curr_image_pos = advance_page(curr_image_pos, 1);
+					advance_current_pos(1);
 					break;
 				case GLFW_KEY_BACKSPACE:
-					curr_image_pos = advance_page(curr_image_pos, -1);
+					advance_current_pos(-1);
 					break;
 			}
 		if (action == GLFW_PRESS)
@@ -458,7 +471,7 @@ void main()
 	void preload_clean_textures()
 	{
 		for (auto preload_offset : {1, -1})
-			for (auto[preload_image_index, size_offset] : page_render_data(advance_page(curr_image_pos, preload_offset)))
+			for (auto[preload_image_index, size_offset] : page_render_data(advance_pos(curr_image_pos, preload_offset)))
 			{
 				int tex_key = texture_key(preload_image_index, size_offset.x);
 				texture_used[tex_key] = true;
