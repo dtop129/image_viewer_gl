@@ -281,11 +281,17 @@ private:
 				new_mode = view_mode::manga;
 			else if (new_mode_str == "single")
 				new_mode = view_mode::single;
-			else
+			else if (new_mode_str == "vertical")
 				new_mode = view_mode::vertical;
+			else
+			{
+				std::cerr << "mode " << new_mode_str << " not existent" << std::endl;
+				return;
+			}
 
 			if (new_mode != curr_view_mode)
 			{
+				std::cout << "current_mode=" << new_mode_str << std::endl;
 				curr_view_mode = new_mode;
 				for (const auto&[tag, tag_indices] : tags_indices)
 					update_tag_pages[tag] = true;
@@ -474,22 +480,20 @@ private:
 		{
 			if (i == indices.size() || image_types[indices[i]] == 3)
 			{
-				if (i < indices.size() && (i - start) % 2 == 1)
-					first_alone_score++;
-				else if (i < indices.size())
-					first_alone_score--;
+				first_alone_score += (i < indices.size()) && ((i - start) % 2 == 1);
+				first_alone_score -= (i < indices.size()) && ((i - start) % 2 == 0);
 
 				bool first_alone = first_alone_score > 0;
+
+				tag_page_starts[start] = start;
 				int page_start = start;
-				for (unsigned int j = start; j < i; ++j)
+				for (unsigned int j = start + 1; j < i; ++j)
 				{
-					if ((j - start) % 2 == first_alone || j == start)
+					if ((j - start) % 2 == first_alone)
 						page_start = j;
 
 					tag_page_starts[j] = page_start;
 				}
-				if (i < indices.size())
-					tag_page_starts[i] = i;
 
 				start = i + 1;
 				first_alone_score = 0;
@@ -602,6 +606,7 @@ public:
 		std::cin.tie(NULL);
 
 		curr_view_mode = view_mode::manga;
+		std::cout << "current_mode=manga" << std::endl;
 	}
 
 	void run()
