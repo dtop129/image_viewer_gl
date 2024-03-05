@@ -26,6 +26,7 @@ private:
 	GLuint white_texID;
 	shader_program program;
 
+	texture_load_thread loader_pool;
 	//key for following maps is texture_key(image_index, texture)
 	std::unordered_map<int, GLuint> texture_IDs;
 	std::unordered_map<int, std::future<image_data>> loading_texdata;
@@ -42,7 +43,7 @@ private:
 	std::unordered_map<int, std::vector<std::pair<int, std::future<int>>>> loading_image_types;
 	std::unordered_map<int, std::vector<int>> page_numbers; //tag -> vector of indices(referring to tags_indices) indicating the page index
 
-	texture_load_thread loader_pool;
+	std::vector<int> last_image_indices;
 
 	struct image_pos
 	{
@@ -257,6 +258,10 @@ private:
 			int offset = std::stoi(args[0]);
 			curr_image_pos = advance_page(curr_image_pos, offset);
 		}
+		else if (type == "quit")
+		{
+			glfwSetWindowShouldClose(window, true);
+		}
 	}
 
 	void handle_stdin()
@@ -393,7 +398,7 @@ private:
 			glm::ivec2 image_size = get_image_size(tag_indices[tag_index]);
 			int scaled_width = image_size.x * scaled_size.y / image_size.y;
 
-			sizes_offsets.emplace_back(tag_indices[tag_index], glm::ivec4(scaled_width, scaled_size.y, offset.x + running_offset, offset.y));
+			sizes_offsets.emplace(sizes_offsets.begin(), tag_indices[tag_index], glm::ivec4(scaled_width, scaled_size.y, offset.x + running_offset, offset.y));
 
 			running_offset += scaled_width;
 		}
@@ -504,13 +509,24 @@ private:
 	{
 		check_paging_updates(curr_image_pos.tag);
 
+		std::vector<int> current_image_indices;
 		for (auto[image_index, size_offset] : page_render_data(curr_image_pos))
 		{
 			glBindTextureUnit(0, get_texture(image_index, size_offset.x));
 			glProgramUniform2f(program.id(), 1, size_offset.z, size_offset.w);
 			glProgramUniform2f(program.id(), 2, size_offset.x, size_offset.y);
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+			current_image_indices.push_back(image_index);
 		}
+
+		if (current_image_indices != last_image_indices)
+		{
+			std::cout << "current_image=";
+			for (auto index : current_image_indices)
+				std::cout << image_paths[index] << '\t';
+			std::cout << std::endl;
+		}
+		last_image_indices = current_image_indices;
 
 		preload_clean_textures();
 	}
