@@ -42,6 +42,7 @@ private:
 	std::map<int, std::vector<int>> tags_indices; //tag -> vector of indices pointing to image vectors
 	std::unordered_map<int, std::vector<std::pair<int, std::future<int>>>> loading_image_types;
 	std::unordered_map<int, std::vector<int>> page_numbers; //tag -> vector of indices(referring to tags_indices) indicating the page index
+	std::unordered_map<int, bool> update_tag_pages;
 
 	std::vector<int> last_image_indices;
 
@@ -84,11 +85,7 @@ private:
 
 	image_pos advance_page(image_pos pos, int dir)
 	{
-		auto page_numbers_it = page_numbers.find(pos.tag);
-		if (page_numbers_it == page_numbers.end())
-			return {-1, -1};
-
-		int start_page_number = page_numbers_it->second[pos.tag_index];
+		int start_page_number = get_page_numbers(pos.tag)[pos.tag_index];
 		int page_number = start_page_number;
 		while (start_page_number == page_number)
 		{
@@ -96,7 +93,7 @@ private:
 			if (new_pos.tag == pos.tag && new_pos.tag_index == pos.tag_index)
 				return new_pos;
 
-			page_number = page_numbers[new_pos.tag][new_pos.tag_index];
+			page_number = get_page_numbers(new_pos.tag)[new_pos.tag_index];
 			pos = new_pos;
 		}
 
@@ -223,7 +220,7 @@ private:
 			if (tag_indices.empty())
 				tags_indices.erase(tag);
 			else
-				page_numbers[tag] = get_page_numbers(tag_indices);
+				update_tag_pages[tag] = true;
 		}
 		else if (type == "goto_tag" || type == "remove_tag")
 		{
@@ -259,6 +256,7 @@ private:
 			tags_indices.erase(tag_it);
 			loading_image_types.erase(tag);
 			page_numbers.erase(tag);
+			update_tag_pages.erase(tag);
 		}
 		else if (type == "goto_offset")
 		{
@@ -279,9 +277,8 @@ private:
 			if (new_mode != curr_view_mode)
 			{
 				curr_view_mode = new_mode;
-				//WOULD BE NICE TO DELAY THE REPAGING ONLY WHEN THE TAG IS OPENED
 				for (const auto&[tag, tag_indices] : tags_indices)
-					page_numbers[tag] = get_page_numbers(tag_indices);
+					update_tag_pages[tag] = true;
 			}
 		}
 		else if (type == "quit")
@@ -369,6 +366,17 @@ private:
 		return image_sizes[image_index];
 	}
 
+	std::vector<int>& get_page_numbers(int tag)
+	{
+		auto update_pages_it = update_tag_pages.find(tag);
+		if (update_pages_it != update_tag_pages.end())
+		{
+			page_numbers[tag] = compute_page_numbers(tags_indices[tag]);
+			update_tag_pages.erase(update_pages_it);
+		}
+		return page_numbers[tag];
+	}
+
 	std::vector<std::pair<int, glm::ivec4>> page_render_data(image_pos pos)
 	{
 		auto tag_indices_it = tags_indices.find(pos.tag);
@@ -376,33 +384,24 @@ private:
 			return {};
 
 		const auto& tag_indices = tag_indices_it->second;
+		auto& tag_page_numbers = get_page_numbers(pos.tag);
 
+		int page_number = tag_page_numbers[pos.tag_index];
 		int page_start_index = pos.tag_index;
-		int page_end_index = page_start_index + 1;
-		if (curr_view_mode == view_mode::manga)
+		for (int tag_index = page_start_index - 1;; --tag_index)
 		{
-			auto tag_pages_it = page_numbers.find(pos.tag);
-			if (tag_pages_it == page_numbers.end())
-				return {};
+			if (tag_index < 0 || tag_page_numbers[tag_index] != page_number)
+				break;
 
-			const auto& tag_page_numbers = tag_pages_it->second;
+			page_start_index = tag_index;
+		}
 
-			int page_number = tag_page_numbers[pos.tag_index];
-			for (int tag_index = page_start_index - 1;; --tag_index)
-			{
-				if (tag_index < 0 || tag_page_numbers[tag_index] != page_number)
-					break;
-
-				page_start_index = tag_index;
-			}
-
-			page_end_index = page_start_index + 1;
-			for (int tag_index = page_start_index + 1;; ++tag_index)
-			{
-				page_end_index = tag_index;
-				if (static_cast<unsigned int>(tag_index) == tag_indices.size() || tag_page_numbers[tag_index] != page_number)
-					break;
-			}
+		int page_end_index = page_start_index + 1;
+		for (int tag_index = page_start_index + 1;; ++tag_index)
+		{
+			page_end_index = tag_index;
+			if (static_cast<unsigned int>(tag_index) == tag_indices.size() || tag_page_numbers[tag_index] != page_number)
+				break;
 		}
 
 		int start_height = get_image_size(tag_indices[page_start_index]).y;
@@ -466,7 +465,7 @@ private:
 		//std::cout << loading_texdata.size() << " " << texture_IDs.size() << std::endl;
 	}
 
-	std::vector<int> get_page_numbers(const std::vector<int>& indices)
+	std::vector<int> compute_page_numbers(const std::vector<int>& indices)
 	{
 		if (curr_view_mode != view_mode::manga)
 			return indices;
@@ -536,7 +535,7 @@ private:
 							   [](auto& val){ return !val.second.valid(); }), loading_types.end());
 
 		if (update)
-			page_numbers[tag] = get_page_numbers(tags_indices[tag]);
+			update_tag_pages[tag] = true;
 	}
 
 	void render()
