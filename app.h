@@ -535,7 +535,7 @@ public:
 		glfwMakeContextCurrent(window);
 		gl3wInit();
 
-		glfwSwapInterval(1);
+		glfwSwapInterval(0);
 
 		glfwSetWindowUserPointer(window, this);
 		glfwSetFramebufferSizeCallback(window , [](GLFWwindow* window, int width, int height) {
@@ -563,9 +563,9 @@ public:
 		glBindVertexArray(null_vaoID);
 		glClearColor(1.f, 0.f, 0.f, 1.f);
 
-		double t = glfwGetTime();
 		while (!glfwWindowShouldClose(window))
 		{
+			double last_t = glfwGetTime();
 			glfwPollEvents();
 			handle_stdin();
 
@@ -573,9 +573,8 @@ public:
 			render();
 			glfwSwapBuffers(window);
 
-			double new_t = glfwGetTime();
-			double dt = new_t - t;
-			t = new_t;
+			std::this_thread::sleep_for(std::chrono::microseconds(int(1000000 * (1.0 / 20 - (glfwGetTime() - last_t)))));
+			//double dt = glfwGetTime() - last_t;
 			//std::cout << 1 / dt << std::endl;
 		}
 	}
