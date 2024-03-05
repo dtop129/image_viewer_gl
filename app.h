@@ -51,6 +51,13 @@ private:
 		int tag_index = -1;
 	} curr_image_pos;
 
+	enum class view_mode
+	{
+		manga,
+		single,
+		vertical
+	} curr_view_mode;
+
 	image_pos advance_pos(image_pos pos, int dir)
 	{
 		auto tag_it = tags_indices.find(pos.tag);
@@ -258,6 +265,25 @@ private:
 			int offset = std::stoi(args[0]);
 			curr_image_pos = advance_page(curr_image_pos, offset);
 		}
+		else if (type == "change_mode")
+		{
+			std::string new_mode_str = args[0];
+			view_mode new_mode;
+			if (new_mode_str == "manga")
+				new_mode = view_mode::manga;
+			else if (new_mode_str == "single")
+				new_mode = view_mode::single;
+			else
+				new_mode = view_mode::vertical;
+
+			if (new_mode != curr_view_mode)
+			{
+				curr_view_mode = new_mode;
+				//WOULD BE NICE TO DELAY THE REPAGING ONLY WHEN THE TAG IS OPENED
+				for (const auto&[tag, tag_indices] : tags_indices)
+					page_numbers[tag] = get_page_numbers(tag_indices);
+			}
+		}
 		else if (type == "quit")
 		{
 			glfwSetWindowShouldClose(window, true);
@@ -349,30 +375,34 @@ private:
 		if (tag_indices_it == tags_indices.end())
 			return {};
 
-		auto tag_pages_it = page_numbers.find(pos.tag);
-		if (tag_pages_it == page_numbers.end())
-			return {};
-
 		const auto& tag_indices = tag_indices_it->second;
-		const auto& tag_page_numbers = tag_pages_it->second;
 
-		int page_number = tag_page_numbers[pos.tag_index];
-
-		int page_start_index = pos.tag_index; //initial guess in case already at beginning
-		for (int tag_index = page_start_index - 1;; --tag_index)
-		{
-			if (tag_index < 0 || tag_page_numbers[tag_index] != page_number)
-				break;
-
-			page_start_index = tag_index;
-		}
-
+		int page_start_index = pos.tag_index;
 		int page_end_index = page_start_index + 1;
-		for (int tag_index = page_start_index + 1;; ++tag_index)
+		if (curr_view_mode == view_mode::manga)
 		{
-			page_end_index = tag_index;
-			if (static_cast<unsigned int>(tag_index) == tag_indices.size() || tag_page_numbers[tag_index] != page_number)
-				break;
+			auto tag_pages_it = page_numbers.find(pos.tag);
+			if (tag_pages_it == page_numbers.end())
+				return {};
+
+			const auto& tag_page_numbers = tag_pages_it->second;
+
+			int page_number = tag_page_numbers[pos.tag_index];
+			for (int tag_index = page_start_index - 1;; --tag_index)
+			{
+				if (tag_index < 0 || tag_page_numbers[tag_index] != page_number)
+					break;
+
+				page_start_index = tag_index;
+			}
+
+			page_end_index = page_start_index + 1;
+			for (int tag_index = page_start_index + 1;; ++tag_index)
+			{
+				page_end_index = tag_index;
+				if (static_cast<unsigned int>(tag_index) == tag_indices.size() || tag_page_numbers[tag_index] != page_number)
+					break;
+			}
 		}
 
 		int start_height = get_image_size(tag_indices[page_start_index]).y;
@@ -438,9 +468,12 @@ private:
 
 	std::vector<int> get_page_numbers(const std::vector<int>& indices)
 	{
-		std::vector<int> tag_page_numbers(indices.size());
-		int page_index = -1;
+		if (curr_view_mode != view_mode::manga)
+			return indices;
 
+		std::vector<int> tag_page_numbers(indices.size());
+
+		int page_index = -1;
 		int start = 0;
 		int first_alone_score = 0;
 		for (unsigned int i = 0; i <= indices.size(); ++i)
@@ -481,6 +514,9 @@ private:
 
 	void check_paging_updates(int tag)
 	{
+		if (curr_view_mode != view_mode::manga)
+			return;
+
 		auto loading_types_it = loading_image_types.find(tag);
 		if (loading_types_it == loading_image_types.end())
 			return;
@@ -500,9 +536,7 @@ private:
 							   [](auto& val){ return !val.second.valid(); }), loading_types.end());
 
 		if (update)
-		{
 			page_numbers[tag] = get_page_numbers(tags_indices[tag]);
-		}
 	}
 
 	void render()
@@ -571,6 +605,8 @@ public:
 
 		std::ios_base::sync_with_stdio(false);
 		std::cin.tie(NULL);
+
+		curr_view_mode = view_mode::single;
 	}
 
 	void run()
