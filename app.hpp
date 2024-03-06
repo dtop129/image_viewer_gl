@@ -597,7 +597,7 @@ void main()
 	}
 
 	std::vector<int>
-	compute_page_start_indices(const std::vector<int> &indices) {
+	compute_page_start_indices(const std::vector<int> &indices) const {
 		std::vector<int> tag_page_starts(indices.size());
 		if (curr_view_mode == view_mode::vertical)
 			return {};
@@ -618,7 +618,8 @@ void main()
 
 				bool first_alone = (first_alone_score > 0) ^ invert_alone;
 
-				tag_page_starts[start] = start;
+				if (start < indices.size())
+					tag_page_starts[start] = start;
 				int page_start = start;
 				for (unsigned int j = start; j < i; ++j) {
 					if ((j - start) % 2 == first_alone || j == start)
