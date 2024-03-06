@@ -500,6 +500,17 @@ void main()
 							  tags_indices[pos.tag][pos.tag_index])}};
 
 		const auto &tag_indices = tags_indices[pos.tag];
+
+		int image_index = tag_indices[pos.tag_index];
+		glm::ivec2 start_image_size = get_image_size(image_index);
+		if (image_types[tag_indices[pos.tag_index]] == 0 && start_image_size.x > start_image_size.y * 0.8)
+		{
+			auto& loading_types = loading_image_types[pos.tag];
+			loading_types.erase(std::find_if(loading_types.begin(), loading_types.end(), [image_index](auto& loading){ return loading.first == image_index; }));
+			image_types[image_index] = 3;
+			update_tag_pages[pos.tag] = true;
+		}
+
 		const auto &tag_page_starts = get_page_start_indices(pos.tag);
 
 		int page_start_index = tag_page_starts[pos.tag_index];
