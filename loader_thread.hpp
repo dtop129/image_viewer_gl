@@ -35,11 +35,11 @@ int compute_image_type(uint8_t *pixels, int w, int h) {
 		}
 	}
 	int depth = 0;
-	int page_type = 0;
+	int page_type = 3;
 
 	unsigned int var_left = 0, var_right = 0;
 
-	while (page_type == 0 && depth++ < 20) {
+	while (page_type == 3 && depth++ < 20) {
 		unsigned int color_left = 0, color_right = 0;
 		color_left = std::accumulate(pixels_cm.begin() + h * depth,
 									 pixels_cm.begin() + h * (depth + 1), 0);
@@ -64,10 +64,10 @@ int compute_image_type(uint8_t *pixels, int w, int h) {
 		var_right = std::max(var_right, accum / h);
 
 		page_type = ((var_right < 500) << 1) | (var_left < 500);
-		if (page_type == 3)
-			page_type = 0;
 	}
 
+	if (page_type == 3)
+		page_type = 0;
 	return page_type;
 }
 
