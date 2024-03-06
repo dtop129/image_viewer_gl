@@ -484,14 +484,10 @@ void main()
 
 	std::vector<std::pair<image_pos, glm::ivec4>> center_page(image_pos pos)
 	{
-		auto tag_indices_it = tags_indices.find(pos.tag);
-		if (tag_indices_it == tags_indices.end())
-			return {};
-
 		if (curr_view_mode == view_mode::vertical)
-			return {{pos, vertical_slice_center(tag_indices_it->second[pos.tag_index])}};
+			return {{pos, vertical_slice_center(tags_indices[pos.tag][pos.tag_index])}};
 
-		const auto& tag_indices = tag_indices_it->second;
+		const auto& tag_indices = tags_indices[pos.tag];
 		const auto& tag_page_starts = get_page_start_indices(pos.tag);
 
 		int page_start_index = tag_page_starts[pos.tag_index];
