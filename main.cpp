@@ -2,8 +2,7 @@
 
 #include "app.hpp"
 
-int main(int argc, char** argv)
-{
+int main(int argc, char **argv) {
 	std::string config_path;
 
 	for (int i = 1; i < argc; i++) {

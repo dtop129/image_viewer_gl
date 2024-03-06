@@ -2,10 +2,10 @@
 
 #include <algorithm>
 #include <condition_variable>
+#include <deque>
 #include <future>
 #include <mutex>
 #include <numeric>
-#include <deque>
 #include <string>
 #include <thread>
 #include <vector>
@@ -16,13 +16,12 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-struct image_data
-{
+struct image_data {
 	std::vector<uint8_t> pixels;
 	glm::ivec2 size;
 };
 
-int get_texture_pageside(uint8_t* pixels, int w, int h) {
+int compute_image_type(uint8_t *pixels, int w, int h) {
 	if (w > 0.8 * h)
 		return 3;
 
@@ -35,39 +34,49 @@ int get_texture_pageside(uint8_t* pixels, int w, int h) {
 			pixels_cm.push_back((pixel[0] + pixel[1] + pixel[2]) / 3);
 		}
 	}
+	int depth = 0;
+	int page_type = 0;
 
-	unsigned int color_left = 0, color_right = 0;
-	color_left = std::accumulate(pixels_cm.begin() + h, pixels_cm.begin() + 2 * h, 0);
-	color_right = std::accumulate(pixels_cm.end() - 2 * h, pixels_cm.end() - h, 0);
+	unsigned int var_left = 0, var_right = 0;
 
-	color_left = color_left / h;
-	color_right = color_right / h;
+	while (page_type == 0 && depth++ < 20) {
+		unsigned int color_left = 0, color_right = 0;
+		color_left = std::accumulate(pixels_cm.begin() + h * depth,
+									 pixels_cm.begin() + h * (depth + 1), 0);
+		color_right = std::accumulate(pixels_cm.end() - h * (depth + 1),
+									  pixels_cm.end() - h * depth, 0);
 
-	unsigned int accum = 0;
-	std::for_each(
-		pixels_cm.begin(), pixels_cm.begin() + h,
-		[&](unsigned int d) { accum += (d - color_left) * (d - color_left); });
-	unsigned int var_left = accum / h;
+		color_left = color_left / h;
+		color_right = color_right / h;
 
-	accum = 0;
-	std::for_each(pixels_cm.end() - h, pixels_cm.end(), [&](unsigned int d) {
-		accum += (d - color_right) * (d - color_right);
-	});
-	unsigned int var_right = accum / h;
+		unsigned int accum = 0;
+		std::for_each(pixels_cm.begin(), pixels_cm.begin() + h,
+					  [&](unsigned int d) {
+						  accum += (d - color_left) * (d - color_left);
+					  });
+		var_left = std::max(var_left, accum / h);
 
-	int pageside = ((var_right < 500) << 1) | (var_left < 500);
-	if (pageside == 3)
-		pageside = 0;
+		accum = 0;
+		std::for_each(pixels_cm.end() - h, pixels_cm.end(),
+					  [&](unsigned int d) {
+						  accum += (d - color_right) * (d - color_right);
+					  });
+		var_right = std::max(var_right, accum / h);
 
-	return pageside;
+		page_type = ((var_right < 500) << 1) | (var_left < 500);
+		if (page_type == 3)
+			page_type = 0;
+	}
+
+	return page_type;
 }
 
-class texture_load_thread
-{
-private:
+class texture_load_thread {
+  private:
 	std::vector<std::jthread> worker_threads;
 
-	using req_type = std::tuple<std::string, int, std::promise<image_data>, std::promise<glm::ivec2>, std::promise<int>>;
+	using req_type = std::tuple<std::string, int, std::promise<image_data>,
+								std::promise<glm::ivec2>, std::promise<int>>;
 
 	std::deque<req_type> requests;
 
@@ -75,42 +84,40 @@ private:
 	std::condition_variable cv;
 	bool stop = false;
 
-	void loader()
-	{
+	void loader() {
 		avir::CLancIR resizer;
 
-		while (true)
-		{
+		while (true) {
 			std::unique_lock lk(mutex);
 			if (requests.empty())
-				cv.wait(lk, [this]{ return !requests.empty() || stop; });
+				cv.wait(lk, [this] { return !requests.empty() || stop; });
 			if (stop)
 				return;
 
-			auto[req_path, req_width, pixel_pr, size_pr, type_pr] = std::move(requests.back());
+			auto [req_path, req_width, pixel_pr, size_pr, type_pr] =
+				std::move(requests.back());
 			requests.pop_back();
 			lk.unlock();
 
 			int width, height;
-			if (req_width == -1)
-			{
+			if (req_width == -1) {
 				stbi_info(req_path.c_str(), &width, &height, nullptr);
 				size_pr.set_value({width, height});
 				continue;
 			}
 
-			uint8_t* pixels = stbi_load(req_path.c_str(), &width, &height, nullptr, 4);
+			uint8_t *pixels =
+				stbi_load(req_path.c_str(), &width, &height, nullptr, 4);
 
 			if (req_width == -2)
-				type_pr.set_value(get_texture_pageside(pixels, width, height));
-			else
-			{
+				type_pr.set_value(compute_image_type(pixels, width, height));
+			else {
 				image_data data;
 				int req_height = height * req_width / width;
 				data.size = {req_width, req_height};
 				data.pixels.resize(req_width * req_height * 4);
-				resizer.resizeImage(pixels, width, height, data.pixels.data(), req_width, req_height, 4);
-
+				resizer.resizeImage(pixels, width, height, data.pixels.data(),
+									req_width, req_height, 4);
 
 				pixel_pr.set_value(data);
 			}
@@ -119,9 +126,7 @@ private:
 		}
 	}
 
-	template<int n_pr>
-	auto add_request(const std::string& path, int width)
-	{
+	template <int n_pr> auto add_request(const std::string &path, int width) {
 		req_type request;
 		std::get<0>(request) = path;
 		std::get<1>(request) = width;
@@ -138,15 +143,13 @@ private:
 		return future;
 	}
 
-public:
-	explicit texture_load_thread(unsigned int n_workers)
-	{
+  public:
+	explicit texture_load_thread(unsigned int n_workers) {
 		for (int i = 0; i < n_workers; ++i)
-			worker_threads.emplace_back([this]{ loader(); });
+			worker_threads.emplace_back([this] { loader(); });
 	}
 
-	~texture_load_thread()
-	{
+	~texture_load_thread() {
 		{
 			std::scoped_lock lk(mutex);
 			stop = true;
@@ -154,16 +157,13 @@ public:
 		cv.notify_all();
 	}
 
-	std::future<image_data> load_texture(const std::string& path, int width)
-	{
+	std::future<image_data> load_texture(const std::string &path, int width) {
 		return add_request<0>(path, width);
 	}
-	std::future<glm::ivec2> get_image_size(const std::string& path)
-	{
+	std::future<glm::ivec2> get_image_size(const std::string &path) {
 		return add_request<1>(path, -1);
 	}
-	std::future<int> get_image_type(const std::string& path)
-	{
+	std::future<int> get_image_type(const std::string &path) {
 		return add_request<2>(path, -2);
 	}
 };
