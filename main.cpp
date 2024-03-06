@@ -1,8 +1,17 @@
+#include <string>
+
 #include "app.h"
 
-int main()
+int main(int argc, char** argv)
 {
-	image_viewer app;
+	std::string config_path;
+
+	for (int i = 1; i < argc; i++) {
+		if (std::string(argv[i]) == "--config")
+			config_path = argv[++i];
+	}
+
+	image_viewer app(config_path);
 	app.run();
 	return 0;
 }

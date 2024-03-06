@@ -70,19 +70,19 @@ private:
 		if (curr_image_pos.tag_index == -1)
 			return false;
 
-		image_pos new_pos = advance_pos(curr_image_pos, dir);
+		image_pos new_pos = try_advance_pos(curr_image_pos, dir);
 
 		if (new_pos == curr_image_pos)
 		{
-			return false;
 			std::cout << "last_in_dir=" << dir << std::endl;
+			return false;
 		}
 
 		curr_image_pos = new_pos;
 		return true;
 	}
 
-	image_pos advance_pos(image_pos pos, int dir)
+	image_pos try_advance_pos(image_pos pos, int dir)
 	{
 		auto tag_it = tags_indices.find(pos.tag);
 		if (tag_it == tags_indices.end())
@@ -114,6 +114,43 @@ private:
 	int texture_key(int image_index, int width) const
 	{
 		return width | (image_index << 16);
+	}
+
+	void init_window()
+	{
+		if (!glfwInit())
+			fprintf(stderr, "ERROR: could not start GLFW3\n");
+
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+		window = glfwCreateWindow(800, 600, "image viewer", NULL, NULL);
+		if (!window) {
+			fprintf(stderr, "ERROR: could not open window with GLFW3\n");
+			glfwTerminate();
+		}
+		window_size = {800, 600};
+
+		glfwMakeContextCurrent(window);
+		gl3wInit();
+
+		glfwSwapInterval(1);
+
+		glfwSetWindowUserPointer(window, this);
+		glfwSetFramebufferSizeCallback(window , [](GLFWwindow* window, int width, int height) {
+			image_viewer* app =
+				static_cast<image_viewer*>(glfwGetWindowUserPointer(window));
+			app->on_resize(width, height);
+		});
+
+		glfwSetKeyCallback(window, [](GLFWwindow* window, int key, int scancode, int action, int mods)
+				{
+					image_viewer* app =
+						static_cast<image_viewer*>(glfwGetWindowUserPointer(window));
+					app->on_key(key, action);
+				});
+
 	}
 
 	void init_GLresources()
@@ -348,9 +385,7 @@ void main()
 			}
 		}
 		else if (type == "quit")
-		{
 			glfwSetWindowShouldClose(window, true);
-		}
 	}
 
 	void handle_keys(float dt)
@@ -535,9 +570,7 @@ void main()
 
 		std::vector<std::pair<image_pos, glm::ivec4>> sizes_offsets;
 
-		if (curr_view_mode == view_mode::manga || curr_view_mode == view_mode::single)
-			sizes_offsets = center_page(curr_image_pos);
-		else if (curr_view_mode == view_mode::vertical)
+		if (curr_view_mode == view_mode::vertical)
 		{
 			image_pos pos = curr_image_pos;
 			float offset_y = vertical_offset;
@@ -550,11 +583,13 @@ void main()
 				sizes_offsets.emplace_back(pos, scaled_size_offset);
 
 				offset_y += scaled_size_offset.y;
-				image_pos new_pos = advance_pos(pos, 1);
+				image_pos new_pos = try_advance_pos(pos, 1);
 				if (new_pos == pos) break;
 				else pos = new_pos;
 			}
 		}
+		else if (curr_view_mode == view_mode::manga || curr_view_mode == view_mode::single)
+			sizes_offsets = center_page(curr_image_pos);
 
 		return sizes_offsets;
 	}
@@ -681,7 +716,7 @@ void main()
 		}
 
 		if (!render_data.empty())
-			for (auto pos : {advance_pos(render_data.front().first, -1), advance_pos(render_data.back().first, 1)})
+			for (auto pos : {try_advance_pos(render_data.front().first, -1), try_advance_pos(render_data.back().first, 1)})
 			{
 				for (auto[pos, size_offset] : center_page(pos))
 				{
@@ -708,52 +743,20 @@ void main()
 	}
 
 public:
-	image_viewer() : loader_pool(4)
+	image_viewer(const std::string& config_path) : loader_pool(4)
 	{
-		if (!glfwInit())
-			fprintf(stderr, "ERROR: could not start GLFW3\n");
-
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
-		window = glfwCreateWindow(800, 600, "image viewer", NULL, NULL);
-		if (!window) {
-			fprintf(stderr, "ERROR: could not open window with GLFW3\n");
-			glfwTerminate();
-		}
-		window_size = {800, 600};
-
-		glfwMakeContextCurrent(window);
-		gl3wInit();
-
-		glfwSwapInterval(1);
-
-		glfwSetWindowUserPointer(window, this);
-		glfwSetFramebufferSizeCallback(window , [](GLFWwindow* window, int width, int height) {
-			image_viewer* app =
-				static_cast<image_viewer*>(glfwGetWindowUserPointer(window));
-			app->on_resize(width, height);
-		});
-
-		glfwSetKeyCallback(window, [](GLFWwindow* window, int key, int scancode, int action, int mods)
-				{
-					image_viewer* app =
-						static_cast<image_viewer*>(glfwGetWindowUserPointer(window));
-					app->on_key(key, action);
-				});
-
+		init_window();
 		init_GLresources();
+	}
 
+	void run()
+	{
 		std::ios_base::sync_with_stdio(false);
 		std::cin.tie(NULL);
 
 		curr_view_mode = view_mode::manga;
 		std::cout << "current_mode=manga" << std::endl;
-	}
 
-	void run()
-	{
 		program.use();
 		glBindVertexArray(null_vaoID);
 		glClearColor(1.f, 0.f, 0.f, 1.f);
