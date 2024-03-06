@@ -31,7 +31,7 @@ int get_texture_pageside(uint8_t* pixels, int w, int h) {
 	pixels_cm.reserve(w * h);
 	for (int x = 0; x < w; x++) {
 		for (int y = 0; y < h; y++) {
-			uint8_t *pixel = pixels + (x + w * y) * 4;
+			const uint8_t *pixel = pixels + (x + w * y) * 4;
 			pixels_cm.push_back((pixel[0] + pixel[1] + pixel[2]) / 3);
 		}
 	}
@@ -139,7 +139,7 @@ private:
 	}
 
 public:
-	texture_load_thread(unsigned int n_workers)
+	explicit texture_load_thread(unsigned int n_workers)
 	{
 		for (int i = 0; i < n_workers; ++i)
 			worker_threads.emplace_back([this]{ loader(); });

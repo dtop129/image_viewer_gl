@@ -13,8 +13,8 @@
 #include <string_view>
 #include <unordered_map>
 
-#include "loader_thread.h"
-#include "shader.h"
+#include "loader_thread.hpp"
+#include "shader.hpp"
 
 class image_viewer {
   private:
