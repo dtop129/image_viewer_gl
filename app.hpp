@@ -37,18 +37,13 @@ class image_viewer {
 	std::vector<glm::ivec2> image_sizes;
 	std::vector<std::future<glm::ivec2>> loading_image_sizes;
 	std::vector<int> image_types;
+	std::vector<std::future<int>> loading_image_types;
 	std::vector<bool> image_removed;
 	std::vector<bool> paging_invert;
 
 	// tags maps
 	std::map<int, std::vector<int>>
 		tags_indices; // tag -> vector of indices pointing to image vectors
-	std::unordered_map<int, std::vector<std::pair<int, std::future<int>>>>
-		loading_image_types;
-	std::unordered_map<int, std::vector<int>>
-		page_start_indices; // tag -> vector of indices(referring to
-							// tags_indices) indicating the page index
-	std::unordered_map<int, bool> update_tag_pages;
 
 	std::vector<int> last_image_indices;
 
@@ -83,7 +78,8 @@ class image_viewer {
 			return {-1, -1};
 
 		image_pos start_pos = pos;
-		int initial_page_start = get_page_start_index(pos);
+		auto page_start_indices = get_page_start_indices(tag_it->second);
+		int initial_page_start = page_start_indices[pos.tag_index];
 		int page_start = initial_page_start;
 		while (initial_page_start == page_start) {
 			pos.tag_index += dir;
@@ -95,14 +91,13 @@ class image_viewer {
 				std::advance(tag_it, dir);
 				pos = {tag_it->first,
 					   int(dir > 0 ? 0 : tag_it->second.size() - 1)};
-				page_start = get_page_start_index(pos);
+				page_start_indices = get_page_start_indices(tag_it->second);
 				break;
 			}
-			page_start = get_page_start_index(pos);
+			page_start = page_start_indices[pos.tag_index];
 		}
 
-		return {pos.tag,
-				page_start}; // always advance up to the beginning of the page
+		return {pos.tag, page_start_indices[pos.tag_index]};
 	}
 
 	int texture_key(int image_index, int width) const {
@@ -230,7 +225,6 @@ void main()
 									[curr_image_pos.tag_index];
 					paging_invert[curr_image_index] =
 						!paging_invert[curr_image_index];
-					update_tag_pages[curr_image_pos.tag] = 1;
 				}
 				break;
 			}
@@ -277,9 +271,9 @@ void main()
 					image_sizes.emplace_back(0, 0);
 					loading_image_sizes.push_back(
 						loader_pool.get_image_size(image_path));
-					image_types.push_back(0);
-					loading_image_types[tag].emplace_back(
-						image_index, loader_pool.get_image_type(image_path));
+					image_types.push_back(-1);
+					loading_image_types.push_back(
+						loader_pool.get_image_type(image_path));
 					paging_invert.push_back(false);
 				} else if (image_removed[image_index])
 					image_removed[image_index] = false;
@@ -309,8 +303,6 @@ void main()
 
 			if (tag_indices.empty())
 				tags_indices.erase(tag);
-			else
-				update_tag_pages[tag] = true;
 		} else if (type == "goto_tag" || type == "remove_tag") {
 			int tag = std::stoi(args[0]);
 			auto tag_it = tags_indices.find(tag);
@@ -341,9 +333,6 @@ void main()
 				image_removed[image_index] = true;
 
 			tags_indices.erase(tag_it);
-			loading_image_types.erase(tag);
-			page_start_indices.erase(tag);
-			update_tag_pages.erase(tag);
 		} else if (type == "change_mode") {
 			std::string new_mode_str = args[0];
 			view_mode new_mode;
@@ -362,8 +351,6 @@ void main()
 			if (new_mode != curr_view_mode) {
 				std::cout << "current_mode=" << new_mode_str << std::endl;
 				curr_view_mode = new_mode;
-				for (const auto &[tag, tag_indices] : tags_indices)
-					update_tag_pages[tag] = true;
 			}
 		} else if (type == "quit")
 			glfwSetWindowShouldClose(window, true);
@@ -470,21 +457,12 @@ void main()
 		return image_sizes[image_index];
 	}
 
-	int get_page_start_index(image_pos pos) {
-		if (curr_view_mode == view_mode::vertical)
-			return pos.tag_index;
-
-		return get_page_start_indices(pos.tag)[pos.tag_index];
-	}
-
-	std::vector<int> &get_page_start_indices(int tag) {
-		auto update_pages_it = update_tag_pages.find(tag);
-		if (update_pages_it != update_tag_pages.end()) {
-			page_start_indices[tag] =
-				compute_page_start_indices(tags_indices[tag]);
-			update_tag_pages.erase(update_pages_it);
-		}
-		return page_start_indices[tag];
+	int get_image_type(int image_index) {
+		auto &future = loading_image_types[image_index];
+		if (future.valid() && future.wait_for(std::chrono::seconds(0)) ==
+								  std::future_status::ready)
+			image_types[image_index] = future.get();
+		return image_types[image_index];
 	}
 
 	glm::ivec4 vertical_slice_center(int image_index) {
@@ -503,19 +481,13 @@ void main()
 
 		int image_index = tag_indices[pos.tag_index];
 		glm::ivec2 start_image_size = get_image_size(image_index);
-		if (image_types[tag_indices[pos.tag_index]] == 0 &&
+		if (image_types[image_index] == -1 &&
 			start_image_size.x > start_image_size.y * 0.8) {
-			auto &loading_types = loading_image_types[pos.tag];
-			loading_types.erase(
-				std::find_if(loading_types.begin(), loading_types.end(),
-							 [image_index](auto &loading) {
-								 return loading.first == image_index;
-							 }));
 			image_types[image_index] = 3;
-			update_tag_pages[pos.tag] = true;
+			loading_image_types[image_index] = std::future<int>();
 		}
 
-		const auto &tag_page_starts = get_page_start_indices(pos.tag);
+		const auto tag_page_starts = get_page_start_indices(tag_indices);
 
 		int page_start_index = tag_page_starts[pos.tag_index];
 
@@ -607,16 +579,14 @@ void main()
 				++it;
 			}
 		}
-		// std::cout << loading_texdata.size() << " " << texture_IDs.size() <<
-		// std::endl;
+		// std::cout << loading_texdata.size() << " " << texture_IDs.size()
+		// << std::endl;
 	}
 
-	std::vector<int>
-	compute_page_start_indices(const std::vector<int> &indices) const {
+	std::vector<int> get_page_start_indices(const std::vector<int> &indices) {
 		std::vector<int> tag_page_starts(indices.size());
-		if (curr_view_mode == view_mode::vertical)
-			return {};
-		if (curr_view_mode == view_mode::single) {
+		if (curr_view_mode == view_mode::single ||
+			curr_view_mode == view_mode::vertical) {
 			std::iota(tag_page_starts.begin(), tag_page_starts.end(), 0);
 			return tag_page_starts;
 		}
@@ -625,7 +595,7 @@ void main()
 		int first_alone_score = 0;
 		bool invert_alone = false;
 		for (unsigned int i = 0; i <= indices.size(); ++i) {
-			if (i == indices.size() || image_types[indices[i]] == 3) {
+			if (i == indices.size() || get_image_type(indices[i]) == 3) {
 				first_alone_score +=
 					(i < indices.size()) && ((i - start) % 2 == 1);
 				first_alone_score -=
@@ -650,12 +620,12 @@ void main()
 				continue;
 			}
 
-			int type = image_types[indices[i]];
-
+			int type = get_image_type(indices[i]);
 			first_alone_score -= (type == 1) && ((i - start) % 2 == 0);
 			first_alone_score += (type == 1) && ((i - start) % 2 == 1);
 			first_alone_score += (type == 2) && ((i - start) % 2 == 0);
 			first_alone_score -= (type == 2) && ((i - start) % 2 == 1);
+
 			if (paging_invert[indices[i]])
 				invert_alone = !invert_alone;
 		}
@@ -663,36 +633,7 @@ void main()
 		return tag_page_starts;
 	}
 
-	void check_paging_updates(int tag) {
-		if (curr_view_mode != view_mode::manga)
-			return;
-
-		auto loading_types_it = loading_image_types.find(tag);
-		if (loading_types_it == loading_image_types.end())
-			return;
-
-		auto &loading_types = loading_types_it->second;
-
-		bool update = false;
-		for (auto &[image_index, future] : loading_types) {
-			if (future.wait_for(std::chrono::seconds(0)) ==
-				std::future_status::ready) {
-				image_types[image_index] = future.get();
-				update = true;
-			}
-		}
-		loading_types.erase(
-			std::remove_if(loading_types.begin(), loading_types.end(),
-						   [](auto &val) { return !val.second.valid(); }),
-			loading_types.end());
-
-		if (update)
-			update_tag_pages[tag] = true;
-	}
-
 	void render() {
-		check_paging_updates(curr_image_pos.tag);
-
 		auto render_data = get_current_render_data();
 		std::vector<int> current_image_indices;
 		for (auto [pos, size_offset] : render_data) {
