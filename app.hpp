@@ -33,9 +33,7 @@ class GLtexture {
 
 	void create(GLenum type) { glCreateTextures(type, 1, &ID); }
 
-	~GLtexture() {
-		glDeleteTextures(1, &ID);
-	}
+	~GLtexture() { glDeleteTextures(1, &ID); }
 
 	GLuint id() const { return ID; }
 };
@@ -191,6 +189,15 @@ void main()
 				break;
 			case GLFW_KEY_I:
 				std::cout << "getinfo" << std::endl;
+				break;
+			case GLFW_KEY_M:
+				change_mode(view_mode::manga);
+				break;
+			case GLFW_KEY_S:
+				change_mode(view_mode::single);
+				break;
+			case GLFW_KEY_V:
+				change_mode(view_mode::vertical);
 				break;
 			case GLFW_KEY_R:
 				if (curr_image_pos.tag_index != -1) {
@@ -383,13 +390,28 @@ void main()
 						  << std::endl;
 				return;
 			}
-
-			if (new_mode != curr_view_mode) {
-				std::cout << "current_mode=" << new_mode_str << std::endl;
-				curr_view_mode = new_mode;
-			}
+			change_mode(new_mode);
 		} else if (type == "quit")
 			glfwSetWindowShouldClose(window, true);
+	}
+
+	void change_mode(view_mode new_mode) {
+		if (new_mode != curr_view_mode) {
+			std::string new_mode_str = [new_mode] {
+				switch (new_mode) {
+				case view_mode::manga:
+					return "manga";
+				case view_mode::single:
+					return "single";
+				case view_mode::vertical:
+					return "vertical";
+				}
+			}();
+
+			std::cout << "current_mode=" << new_mode_str << std::endl;
+		}
+
+		curr_view_mode = new_mode;
 	}
 
 	void handle_keys(float dt) {
@@ -658,13 +680,13 @@ void main()
 					preload_texture(tags_indices[pos.tag][pos.tag_index],
 									size_offset.x);
 
-		 if (current_image_indices != last_image_indices) {
+		if (current_image_indices != last_image_indices) {
 			std::cout << "current_image=";
 			for (auto index : current_image_indices)
 				std::cout << image_paths[index] << '\t';
 			std::cout << std::endl;
-		 }
-		 last_image_indices = current_image_indices;
+		}
+		last_image_indices = current_image_indices;
 
 		clean_textures();
 	}
@@ -683,7 +705,7 @@ void main()
 
 		program.use();
 		glBindVertexArray(null_vaoID);
-		glClearColor(1.f, 0.f, 0.f, 1.f);
+		glClearColor(0.f, 0.f, 0.f, 1.f);
 
 		std::cout << "current_mode=manga" << std::endl;
 
