@@ -283,6 +283,8 @@ void main()
 				page_start_indices = get_page_start_indices(tag_it->second);
 				break;
 			}
+			else if (dir > 0 && current_render_data.back().first.tag_index == tags_indices[current_render_data.back().first.tag].size() - 1)
+				return start_pos;
 			page_start = page_start_indices[pos.tag_index];
 		}
 
