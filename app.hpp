@@ -70,7 +70,6 @@ class image_viewer {
 		bool operator==(image_pos const &) const = default;
 	} curr_image_pos;
 
-	std::vector<std::pair<image_pos, glm::ivec4>> current_render_data;
 	std::vector<int> last_image_indices;
 
 	enum class view_mode { manga, single, vertical } curr_view_mode;
@@ -182,11 +181,11 @@ void main()
 			switch (key) {
 			case GLFW_KEY_SPACE:
 			case GLFW_KEY_LEFT:
-				advance_current_pos(1, true);
+				advance_current_pos(1);
 				break;
 			case GLFW_KEY_BACKSPACE:
 			case GLFW_KEY_RIGHT:
-				advance_current_pos(-1, true);
+				advance_current_pos(-1);
 				break;
 			}
 		if (action == GLFW_PRESS)
@@ -228,10 +227,10 @@ void main()
 		if (action == GLFW_PRESS)
 			switch (button) {
 			case GLFW_MOUSE_BUTTON_LEFT:
-				advance_current_pos(1, true);
+				advance_current_pos(1);
 				break;
 			case GLFW_MOUSE_BUTTON_RIGHT:
-				advance_current_pos(-1, true);
+				advance_current_pos(-1);
 				break;
 			case GLFW_MOUSE_BUTTON_MIDDLE:
 				if (curr_image_pos.tag_index != -1) {
@@ -245,15 +244,20 @@ void main()
 			}
 	}
 
-	bool advance_current_pos(int dir, bool log = false) {
+	bool advance_current_pos(int dir) {
 		if (curr_image_pos.tag_index == -1)
 			return false;
+
+		vertical_offset = 0;
+
+		if (curr_view_mode == view_mode::vertical)
+			if (vertical_offset < 0 && dir < 1)
+				return false;
 
 		image_pos new_pos = try_advance_pos(curr_image_pos, dir);
 
 		if (new_pos == curr_image_pos) {
-			if (log)
-				std::cout << "last_in_dir=" << dir << std::endl;
+			std::cout << "last_in_dir=" << dir << std::endl;
 			return false;
 		}
 
@@ -283,8 +287,6 @@ void main()
 				page_start_indices = get_page_start_indices(tag_it->second);
 				break;
 			}
-			else if (dir > 0 && current_render_data.back().first.tag_index == tags_indices[current_render_data.back().first.tag].size() - 1)
-				return start_pos;
 			page_start = page_start_indices[pos.tag_index];
 		}
 
@@ -451,60 +453,41 @@ void main()
 		curr_view_mode = new_mode;
 	}
 
-	void handle_keys(float dt) {
+	void fix_vertical_limits()
+	{
 		if (curr_view_mode != view_mode::vertical)
 			return;
-		if (current_render_data.empty())
+
+		auto new_render_data = get_current_render_data();
+		if (new_render_data.empty())
 			return;
 
-		int move_dir = 0;
+		auto &[last_pos, last_size_offset] = new_render_data.back();
+		float bottom_edge = last_size_offset.w + last_size_offset.y;
+
+		if (bottom_edge < window_size.y) {
+			vertical_offset -= bottom_edge - window_size.y;
+			new_render_data = get_current_render_data();
+		}
+
+		auto &[first_pos, first_size_offset] = new_render_data.front();
+		float upper_edge = first_size_offset.w;
+		if (upper_edge > 0.f)
+			vertical_offset -= upper_edge;
+	}
+
+	void vertical_scroll(float offset) {
+		if (curr_view_mode != view_mode::vertical)
+			return;
+
+		vertical_offset += offset;
+	}
+
+	void handle_keys(float dt) {
 		if (keys_pressed[GLFW_KEY_J] || keys_pressed[GLFW_KEY_DOWN])
-			move_dir = -1;
-		if (keys_pressed[GLFW_KEY_K] || keys_pressed[GLFW_KEY_UP])
-			move_dir = 1;
-
-		float move = 500 * dt * move_dir;
-
-		int current_scaled_height = current_render_data.front().second.y;
-
-		auto &first_size_offset = current_render_data.front().second;
-		auto &last_size_offset = current_render_data.back().second;
-		float up_border = first_size_offset.w + move;
-		float bottom_border = last_size_offset.w + last_size_offset.y + move;
-		bool bottom_last =
-			current_render_data.back().first.tag_index ==
-			tags_indices[current_render_data.back().first.tag].size() - 1;
-
-		if (bottom_border < window_size.y && bottom_last) {
-			bottom_border = window_size.y;
-			move = bottom_border - (last_size_offset.w + last_size_offset.y);
-			up_border = first_size_offset.w + move;
-
-			if (move_dir < 0)
-				std::cout << "last_in_dir=1" << std::endl;
-		}
-
-		if (up_border > 0.f) {
-			bool changed = advance_current_pos(-1, move_dir > 0);
-			if (changed) {
-				glm::ivec4 size_offset = vertical_slice_center(
-					tags_indices[curr_image_pos.tag][curr_image_pos.tag_index]);
-				up_border -= size_offset.y;
-			} else
-				up_border = 0.f;
-
-			move = up_border - first_size_offset.w;
-		} else if (up_border < -current_scaled_height) {
-			bool changed = advance_current_pos(1, move_dir < 0);
-			if (changed)
-				up_border += current_scaled_height;
-			else
-				up_border = -current_scaled_height;
-
-			move = up_border - first_size_offset.w;
-		}
-
-		vertical_offset += move;
+			vertical_scroll(-500 * dt);
+		else if (keys_pressed[GLFW_KEY_K] || keys_pressed[GLFW_KEY_UP])
+			vertical_scroll(500 * dt);
 	}
 
 	void handle_stdin() {
@@ -621,22 +604,36 @@ void main()
 		return sizes_offsets;
 	}
 
-	void update_current_render_data() {
-		current_render_data.clear();
-
-		if (curr_image_pos.tag_index == -1)
-			return;
+	std::vector<std::pair<image_pos, glm::ivec4>> get_current_render_data() {
+		std::vector<std::pair<image_pos, glm::ivec4>> sizes_offsets;
+		if (curr_image_pos.tag_index == -1) {
+			vertical_offset = 0;
+			return sizes_offsets;
+		}
 
 		if (curr_view_mode == view_mode::vertical) {
 			image_pos pos = curr_image_pos;
-			float offset_y = vertical_offset;
 
+			while (vertical_offset > 0) {
+				image_pos prev_pos = try_advance_pos(pos, -1);
+				if (prev_pos != pos) {
+					pos = prev_pos;
+					glm::ivec4 scaled_size_offset = vertical_slice_center(
+						tags_indices[pos.tag][pos.tag_index]);
+
+					vertical_offset -= scaled_size_offset.y;
+				} else
+					break;
+			}
+
+			float offset_y = vertical_offset;
 			while (offset_y < window_size.y) {
-				int image_index = tags_indices[pos.tag][pos.tag_index];
 				glm::ivec4 scaled_size_offset =
-					vertical_slice_center(image_index);
+					vertical_slice_center(tags_indices[pos.tag][pos.tag_index]);
 				scaled_size_offset.w += offset_y;
-				current_render_data.emplace_back(pos, scaled_size_offset);
+
+				if (offset_y + scaled_size_offset.y > 0)
+					sizes_offsets.emplace_back(pos, scaled_size_offset);
 
 				offset_y += scaled_size_offset.y;
 				image_pos new_pos = try_advance_pos(pos, 1);
@@ -645,9 +642,17 @@ void main()
 				else
 					pos = new_pos;
 			}
+
+			// auto fix curr_image_pos
+			if (!sizes_offsets.empty()) {
+				curr_image_pos = sizes_offsets.front().first;
+				vertical_offset = sizes_offsets.front().second.w;
+			}
 		} else if (curr_view_mode == view_mode::manga ||
 				   curr_view_mode == view_mode::single)
-			current_render_data = center_page(curr_image_pos);
+			sizes_offsets = center_page(curr_image_pos);
+
+		return sizes_offsets;
 	}
 
 	void clean_textures() {
@@ -717,7 +722,8 @@ void main()
 	}
 
 	void render() {
-		update_current_render_data();
+		fix_vertical_limits();
+		auto current_render_data = get_current_render_data();
 		std::vector<int> current_image_indices;
 		for (auto [pos, size_offset] : current_render_data) {
 			glBindTextureUnit(
