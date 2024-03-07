@@ -110,6 +110,13 @@ class image_viewer {
 				static_cast<image_viewer *>(glfwGetWindowUserPointer(window));
 			app->on_key(key, action);
 		});
+
+		glfwSetMouseButtonCallback(window, [](GLFWwindow *window, int button,
+											  int action, int mods) {
+			image_viewer *app =
+				static_cast<image_viewer *>(glfwGetWindowUserPointer(window));
+			app->on_button(button, action);
+		});
 	}
 
 	void init_GLresources() {
@@ -173,9 +180,11 @@ void main()
 		if (action == GLFW_PRESS || action == GLFW_REPEAT)
 			switch (key) {
 			case GLFW_KEY_SPACE:
+			case GLFW_KEY_LEFT:
 				advance_current_pos(1);
 				break;
 			case GLFW_KEY_BACKSPACE:
+			case GLFW_KEY_RIGHT:
 				advance_current_pos(-1);
 				break;
 			}
@@ -183,12 +192,6 @@ void main()
 			switch (key) {
 			case GLFW_KEY_Q:
 				glfwSetWindowShouldClose(window, true);
-				break;
-			case GLFW_KEY_C:
-				std::cout << "changechapter" << std::endl;
-				break;
-			case GLFW_KEY_I:
-				std::cout << "getinfo" << std::endl;
 				break;
 			case GLFW_KEY_M:
 				change_mode(view_mode::manga);
@@ -200,6 +203,36 @@ void main()
 				change_mode(view_mode::vertical);
 				break;
 			case GLFW_KEY_R:
+				if (curr_image_pos.tag_index != -1) {
+					int curr_image_index =
+						tags_indices[curr_image_pos.tag]
+									[curr_image_pos.tag_index];
+					paging_invert[curr_image_index] =
+						!paging_invert[curr_image_index];
+				}
+				break;
+			case GLFW_KEY_C:
+				std::cout << "changechapter" << std::endl;
+				break;
+			case GLFW_KEY_I:
+				std::cout << "getinfo" << std::endl;
+				break;
+			}
+	}
+
+	void on_button(int button, int action) {
+		if (action == GLFW_RELEASE)
+			return;
+
+		if (action == GLFW_PRESS)
+			switch (button) {
+			case GLFW_MOUSE_BUTTON_LEFT:
+				advance_current_pos(1);
+				break;
+			case GLFW_MOUSE_BUTTON_RIGHT:
+				advance_current_pos(-1);
+				break;
+			case GLFW_MOUSE_BUTTON_MIDDLE:
 				if (curr_image_pos.tag_index != -1) {
 					int curr_image_index =
 						tags_indices[curr_image_pos.tag]
@@ -420,9 +453,9 @@ void main()
 		if (curr_view_mode != view_mode::vertical)
 			return;
 
-		if (keys_pressed[GLFW_KEY_J])
+		if (keys_pressed[GLFW_KEY_J] || keys_pressed[GLFW_KEY_DOWN])
 			vertical_offset -= 500 * dt;
-		if (keys_pressed[GLFW_KEY_K])
+		if (keys_pressed[GLFW_KEY_K] || keys_pressed[GLFW_KEY_UP])
 			vertical_offset += 500 * dt;
 
 		int current_scaled_height =
