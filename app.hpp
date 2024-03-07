@@ -16,6 +16,30 @@
 #include "loader_thread.hpp"
 #include "shader.hpp"
 
+class GLtexture {
+  private:
+	GLuint ID = 0;
+
+  public:
+	GLtexture(GLenum type) { create(type); }
+	GLtexture() = default;
+
+	GLtexture(GLtexture &&other) { *this = std::move(other); }
+	GLtexture &operator=(GLtexture &&other) {
+		ID = other.ID;
+		other.ID = 0;
+		return *this;
+	}
+
+	void create(GLenum type) { glCreateTextures(type, 1, &ID); }
+
+	~GLtexture() {
+		glDeleteTextures(1, &ID);
+	}
+
+	GLuint id() const { return ID; }
+};
+
 class image_viewer {
   private:
 	GLFWwindow *window;
@@ -23,12 +47,12 @@ class image_viewer {
 	std::unordered_map<int, bool> keys_pressed;
 
 	GLuint null_vaoID;
-	GLuint white_texID;
+	GLtexture white_tex;
 	shader_program program;
 
 	texture_load_thread loader_pool;
 	// key for following maps is texture_key(image_index, texture)
-	std::unordered_map<int, lazy_load<image_data, GLuint>> texture_IDs;
+	std::unordered_map<int, lazy_load<image_data, GLtexture>> texture_IDs;
 	std::unordered_map<int, bool> texture_used;
 
 	// images vectors
@@ -127,10 +151,10 @@ void main()
 		glProgramUniformMatrix4fv(program.id(), 0, 1, 0, &proj[0][0]);
 		glViewport(0, 0, 800, 600);
 
-		glCreateTextures(GL_TEXTURE_2D, 1, &white_texID);
 		uint8_t white_pixel[] = {255, 255, 255, 255};
-		glTextureStorage2D(white_texID, 1, GL_RGBA8, 1, 1);
-		glTextureSubImage2D(white_texID, 0, 0, 0, 1, 1, GL_RGBA,
+		white_tex.create(GL_TEXTURE_2D);
+		glTextureStorage2D(white_tex.id(), 1, GL_RGBA8, 1, 1);
+		glTextureSubImage2D(white_tex.id(), 0, 0, 0, 1, 1, GL_RGBA,
 							GL_UNSIGNED_BYTE, white_pixel);
 	}
 
@@ -422,32 +446,33 @@ void main()
 				tex_key,
 				loader_pool.load_texture(image_paths[image_index], width),
 				[](auto &&loaded_data) {
-					GLuint texID;
-					glCreateTextures(GL_TEXTURE_2D, 1, &texID);
-					glTextureStorage2D(texID, 1, GL_RGBA8, loaded_data.size.x,
-									   loaded_data.size.y);
-					glTextureSubImage2D(
-						texID, 0, 0, 0, loaded_data.size.x, loaded_data.size.y,
-						GL_RGBA, GL_UNSIGNED_BYTE, loaded_data.pixels.data());
-					return texID;
+					GLtexture tex(GL_TEXTURE_2D);
+					glTextureStorage2D(tex.id(), 1, GL_RGBA8,
+									   loaded_data.size.x, loaded_data.size.y);
+					glTextureSubImage2D(tex.id(), 0, 0, 0, loaded_data.size.x,
+										loaded_data.size.y, GL_RGBA,
+										GL_UNSIGNED_BYTE,
+										loaded_data.pixels.data());
+					return tex;
 				})
 			.first->second;
 	}
 
-	GLuint get_texture(int image_index, int width) {
-		GLuint texID = preload_texture(image_index, width).get_or(white_texID);
-		if (texID == white_texID) {
+	const GLtexture &get_texture(int image_index, int width) {
+		const GLtexture &tex =
+			preload_texture(image_index, width).get_or(white_tex);
+		if (tex.id() == white_tex.id()) {
 			auto loaded_it = std::find_if(
 				texture_IDs.begin(), texture_IDs.end(),
 				[image_index](auto &tex) {
 					return tex.first >> 16 == image_index && tex.second.ready();
 				});
 			if (loaded_it != texture_IDs.end()) {
-				texID = loaded_it->second.get();
 				texture_used[loaded_it->first] = true;
+				return loaded_it->second.get();
 			}
 		}
-		return texID;
+		return tex;
 	}
 
 	glm::ivec4 vertical_slice_center(int image_index) {
@@ -550,11 +575,8 @@ void main()
 			auto &[tex_key, used] = *it;
 			if (!used) {
 				auto texID_it = texture_IDs.find(tex_key);
-				if (texID_it != texture_IDs.end()) {
-					GLuint texID = texID_it->second.get_or(0);
-					glDeleteTextures(1, &texID);
+				if (texID_it != texture_IDs.end())
 					texture_IDs.erase(texID_it);
-				}
 
 				it = texture_used.erase(it);
 			} else {
@@ -618,9 +640,10 @@ void main()
 		auto render_data = get_current_render_data();
 		std::vector<int> current_image_indices;
 		for (auto [pos, size_offset] : render_data) {
-			glBindTextureUnit(0,
-							  get_texture(tags_indices[pos.tag][pos.tag_index],
-										  size_offset.x));
+			glBindTextureUnit(
+				0,
+				get_texture(tags_indices[pos.tag][pos.tag_index], size_offset.x)
+					.id());
 			glProgramUniform2f(program.id(), 1, size_offset.z, size_offset.w);
 			glProgramUniform2f(program.id(), 2, size_offset.x, size_offset.y);
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -630,19 +653,18 @@ void main()
 
 		if (!render_data.empty())
 			for (auto pos : {try_advance_pos(render_data.front().first, -1),
-							 try_advance_pos(render_data.back().first, 1)}) {
+							 try_advance_pos(render_data.back().first, 1)})
 				for (auto [pos, size_offset] : center_page(pos))
 					preload_texture(tags_indices[pos.tag][pos.tag_index],
 									size_offset.x);
-			}
 
-		if (current_image_indices != last_image_indices) {
+		 if (current_image_indices != last_image_indices) {
 			std::cout << "current_image=";
 			for (auto index : current_image_indices)
 				std::cout << image_paths[index] << '\t';
 			std::cout << std::endl;
-		}
-		last_image_indices = current_image_indices;
+		 }
+		 last_image_indices = current_image_indices;
 
 		clean_textures();
 	}
@@ -681,11 +703,6 @@ void main()
 	}
 
 	~image_viewer() {
-		glDeleteTextures(1, &white_texID);
-		for (auto &[tex_key, tex] : texture_IDs) {
-			GLuint texID = tex.get_or(0);
-			glDeleteTextures(1, &texID);
-		}
 		glDeleteVertexArrays(1, &null_vaoID);
 
 		glfwDestroyWindow(window);

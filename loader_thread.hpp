@@ -95,7 +95,7 @@ template <typename FutureOutput, typename FuncOutput = void> class lazy_load {
 
 	lazy_load() : unset(true) {}
 
-	ResultType get() {
+	const ResultType& get() {
 		if (future.valid()) {
 			if constexpr (std::is_same_v<FuncOutput, void>)
 				result = future.get();
@@ -105,9 +105,15 @@ template <typename FutureOutput, typename FuncOutput = void> class lazy_load {
 		return result;
 	}
 
-	ResultType get_or(const ResultType &alt) {
+	const ResultType& get_or(const ResultType& alt) {
 		if (!ready())
 			return alt;
+		return get();
+	}
+
+	ResultType get_or(ResultType&& alt) {
+		if (!ready())
+			return std::move(alt);
 		return get();
 	}
 
