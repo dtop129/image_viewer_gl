@@ -224,10 +224,13 @@ void main()
 	}
 
 	glm::ivec2 get_image_size(int image_index) {
-		if (!image_sizes[image_index].has_value()) {
-			image_sizes[image_index] =
-				lazy_load(loader_pool.get_image_size(image_paths[image_index]));
+		if (!image_sizes[image_index].ready()) {
+			glm::ivec2 size;
+			stbi_info(image_paths[image_index].c_str(), &size.x, &size.y,
+					  nullptr);
+			image_sizes[image_index] = lazy_load(size);
 		}
+
 		return image_sizes[image_index].get();
 	}
 
@@ -286,7 +289,6 @@ void main()
 
 					image_sizes.emplace_back(
 						loader_pool.get_image_size(image_path));
-					image_sizes.emplace_back();
 					image_types.emplace_back();
 				} else if (image_removed[image_index])
 					image_removed[image_index] = false;
@@ -416,26 +418,36 @@ void main()
 			return tex_it->second;
 
 		return texture_IDs
-			.try_emplace(tex_key,
-					 loader_pool.load_texture(image_paths[image_index], width),
-					 [](auto &&loaded_data) {
-						 GLuint texID;
-						 glCreateTextures(GL_TEXTURE_2D, 1, &texID);
-						 glTextureStorage2D(texID, 1, GL_RGBA8,
-											loaded_data.size.x,
-											loaded_data.size.y);
-						 glTextureSubImage2D(texID, 0, 0, 0, loaded_data.size.x,
-											 loaded_data.size.y, GL_RGBA,
-											 GL_UNSIGNED_BYTE,
-											 loaded_data.pixels.data());
-						 return texID;
-					 })
+			.try_emplace(
+				tex_key,
+				loader_pool.load_texture(image_paths[image_index], width),
+				[](auto &&loaded_data) {
+					GLuint texID;
+					glCreateTextures(GL_TEXTURE_2D, 1, &texID);
+					glTextureStorage2D(texID, 1, GL_RGBA8, loaded_data.size.x,
+									   loaded_data.size.y);
+					glTextureSubImage2D(
+						texID, 0, 0, 0, loaded_data.size.x, loaded_data.size.y,
+						GL_RGBA, GL_UNSIGNED_BYTE, loaded_data.pixels.data());
+					return texID;
+				})
 			.first->second;
 	}
 
 	GLuint get_texture(int image_index, int width) {
-		auto &tex = preload_texture(image_index, width);
-		return tex.get_or(white_texID);
+		GLuint texID = preload_texture(image_index, width).get_or(white_texID);
+		if (texID == white_texID) {
+			auto loaded_it = std::find_if(
+				texture_IDs.begin(), texture_IDs.end(),
+				[image_index](auto &tex) {
+					return tex.first >> 16 == image_index && tex.second.ready();
+				});
+			if (loaded_it != texture_IDs.end()) {
+				texID = loaded_it->second.get();
+				texture_used[loaded_it->first] = true;
+			}
+		}
+		return texID;
 	}
 
 	glm::ivec4 vertical_slice_center(int image_index) {
@@ -564,7 +576,8 @@ void main()
 		int first_alone_score = 0;
 		bool invert_alone = false;
 		for (unsigned int i = 0; i <= indices.size(); ++i) {
-			if (i == indices.size() || get_image_type(indices[i]) == 3) {
+			int type = i == indices.size() ? 0 : get_image_type(indices[i]);
+			if (i == indices.size() || type == 3) {
 				first_alone_score +=
 					(i < indices.size()) && ((i - start) % 2 == 1);
 				first_alone_score -=
@@ -589,7 +602,6 @@ void main()
 				continue;
 			}
 
-			int type = get_image_type(indices[i]);
 			first_alone_score -= (type == 1) && ((i - start) % 2 == 0);
 			first_alone_score += (type == 1) && ((i - start) % 2 == 1);
 			first_alone_score += (type == 2) && ((i - start) % 2 == 0);
@@ -619,14 +631,10 @@ void main()
 		if (!render_data.empty())
 			for (auto pos : {try_advance_pos(render_data.front().first, -1),
 							 try_advance_pos(render_data.back().first, 1)}) {
-				for (auto [pos, size_offset] : center_page(pos)) {
-					int image_index = tags_indices[pos.tag][pos.tag_index];
-					preload_texture(image_index, size_offset.x);
-					int tex_key = texture_key(image_index, size_offset.x);
-					texture_used[tex_key] = true;
-				}
+				for (auto [pos, size_offset] : center_page(pos))
+					preload_texture(tags_indices[pos.tag][pos.tag_index],
+									size_offset.x);
 			}
-		clean_textures();
 
 		if (current_image_indices != last_image_indices) {
 			std::cout << "current_image=";
@@ -635,6 +643,8 @@ void main()
 			std::cout << std::endl;
 		}
 		last_image_indices = current_image_indices;
+
+		clean_textures();
 	}
 
   public:
@@ -648,11 +658,12 @@ void main()
 		std::cin.tie(NULL);
 
 		curr_view_mode = view_mode::manga;
-		std::cout << "current_mode=manga" << std::endl;
 
 		program.use();
 		glBindVertexArray(null_vaoID);
 		glClearColor(1.f, 0.f, 0.f, 1.f);
+
+		std::cout << "current_mode=manga" << std::endl;
 
 		double dt = 0;
 		while (!glfwWindowShouldClose(window)) {

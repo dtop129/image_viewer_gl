@@ -71,41 +71,41 @@ int compute_image_type(uint8_t *pixels, int w, int h) {
 	return page_type;
 }
 
-template <typename T, typename F = T> class lazy_load {
+template <typename FutureOutput, typename FuncOutput = void> class lazy_load {
   private:
-	std::future<T> future;
-	F result;
+	using TransType = FuncOutput (*)(FutureOutput &&);
+	using FutureType = std::future<FutureOutput>;
+	using ResultType = std::conditional_t<std::is_same_v<FuncOutput, void>,
+										  FutureOutput, FuncOutput>;
 
-	F (*transform)(T&&) = nullptr;
+	FutureType future;
+	ResultType result;
+	TransType transform;
 
 	bool unset = false;
 
   public:
-	explicit lazy_load(std::future<T> &&fut)
-		: future(std::forward<std::future<T>>(fut)) {}
+	explicit lazy_load(FutureType &&fut) : future(std::move(fut)) {}
 
-	explicit lazy_load(std::future<T> &&fut, F (*transfunc)(T&&))
-		: future(std::forward<std::future<T>>(fut)), transform(transfunc) {}
+	explicit lazy_load(FutureType &&fut, TransType transfunc)
+		: future(std::move(fut)), transform(transfunc) {}
 
+	template <typename T>
 	explicit lazy_load(T &&val) : result(std::forward<T>(val)) {}
 
 	lazy_load() : unset(true) {}
 
-	F get() {
-		if (future.valid())
-		{
-			if constexpr (std::is_same_v<F, T>)
-				if (transform == nullptr)
-					result = future.get();
-				else
-					result = transform(future.get());
+	ResultType get() {
+		if (future.valid()) {
+			if constexpr (std::is_same_v<FuncOutput, void>)
+				result = future.get();
 			else
 				result = transform(future.get());
 		}
 		return result;
 	}
 
-	F get_or(const F &alt) {
+	ResultType get_or(const ResultType &alt) {
 		if (!ready())
 			return alt;
 		return get();
@@ -120,6 +120,12 @@ template <typename T, typename F = T> class lazy_load {
 
 	bool has_value() const { return !unset; }
 };
+
+template <typename T> lazy_load(T &&val) -> lazy_load<std::remove_cvref_t<T>>;
+
+template <typename T, typename F>
+lazy_load(std::future<T> &&fut, F transfunc)
+	-> lazy_load<T, std::invoke_result_t<F, T>>;
 
 class texture_load_thread {
   private:
@@ -183,7 +189,7 @@ class texture_load_thread {
 		auto future = std::get<2 + n_pr>(request).get_future();
 		{
 			std::scoped_lock lock(mutex);
-			if (width == -2)
+			if (width < 0)
 				requests.push_front(std::move(request));
 			else
 				requests.push_back(std::move(request));
