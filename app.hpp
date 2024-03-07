@@ -28,8 +28,7 @@ class image_viewer {
 
 	texture_load_thread loader_pool;
 	// key for following maps is texture_key(image_index, texture)
-	std::unordered_map<int, GLuint> texture_IDs;
-	std::unordered_map<int, std::future<image_data>> loading_texdata;
+	std::unordered_map<int, lazy_load<image_data, GLuint>> texture_IDs;
 	std::unordered_map<int, bool> texture_used;
 
 	// images vectors
@@ -408,7 +407,7 @@ void main()
 		}
 	}
 
-	GLuint get_texture(int image_index, int width) {
+	auto &preload_texture(int image_index, int width) {
 		int tex_key = texture_key(image_index, width);
 		texture_used[tex_key] = true;
 
@@ -416,37 +415,27 @@ void main()
 		if (tex_it != texture_IDs.end())
 			return tex_it->second;
 
-		auto data_it = loading_texdata.find(tex_key);
-		if (data_it == loading_texdata.end() ||
-			data_it->second.wait_for(std::chrono::seconds(0)) !=
-				std::future_status::ready) {
-			if (data_it == loading_texdata.end())
-				loading_texdata.emplace(
-					tex_key,
-					loader_pool.load_texture(image_paths[image_index], width));
+		return texture_IDs
+			.try_emplace(tex_key,
+					 loader_pool.load_texture(image_paths[image_index], width),
+					 [](auto &&loaded_data) {
+						 GLuint texID;
+						 glCreateTextures(GL_TEXTURE_2D, 1, &texID);
+						 glTextureStorage2D(texID, 1, GL_RGBA8,
+											loaded_data.size.x,
+											loaded_data.size.y);
+						 glTextureSubImage2D(texID, 0, 0, 0, loaded_data.size.x,
+											 loaded_data.size.y, GL_RGBA,
+											 GL_UNSIGNED_BYTE,
+											 loaded_data.pixels.data());
+						 return texID;
+					 })
+			.first->second;
+	}
 
-			for (auto &[loaded_key, ID] : texture_IDs) {
-				int loaded_index = loaded_key >> 16;
-				if (image_index == loaded_index) {
-					texture_used[loaded_key] = true;
-					return ID;
-				}
-			}
-			return white_texID;
-		}
-
-		image_data loaded_data = data_it->second.get();
-		loading_texdata.erase(data_it);
-
-		GLuint &texID = texture_IDs[tex_key];
-		glCreateTextures(GL_TEXTURE_2D, 1, &texID);
-		glTextureStorage2D(texID, 1, GL_RGBA8, loaded_data.size.x,
-						   loaded_data.size.y);
-		glTextureSubImage2D(texID, 0, 0, 0, loaded_data.size.x,
-							loaded_data.size.y, GL_RGBA, GL_UNSIGNED_BYTE,
-							loaded_data.pixels.data());
-
-		return texID;
+	GLuint get_texture(int image_index, int width) {
+		auto &tex = preload_texture(image_index, width);
+		return tex.get_or(white_texID);
 	}
 
 	glm::ivec4 vertical_slice_center(int image_index) {
@@ -550,11 +539,11 @@ void main()
 			if (!used) {
 				auto texID_it = texture_IDs.find(tex_key);
 				if (texID_it != texture_IDs.end()) {
-					glDeleteTextures(1, &texID_it->second);
-					texture_IDs.erase(tex_key);
+					GLuint texID = texID_it->second.get_or(0);
+					glDeleteTextures(1, &texID);
+					texture_IDs.erase(texID_it);
 				}
 
-				loading_texdata.erase(tex_key);
 				it = texture_used.erase(it);
 			} else {
 				used = false;
@@ -632,15 +621,9 @@ void main()
 							 try_advance_pos(render_data.back().first, 1)}) {
 				for (auto [pos, size_offset] : center_page(pos)) {
 					int image_index = tags_indices[pos.tag][pos.tag_index];
+					preload_texture(image_index, size_offset.x);
 					int tex_key = texture_key(image_index, size_offset.x);
-
 					texture_used[tex_key] = true;
-					if (!texture_IDs.contains(tex_key) &&
-						!loading_texdata.contains(tex_key))
-						loading_texdata.emplace(
-							tex_key,
-							loader_pool.load_texture(image_paths[image_index],
-													 size_offset.x));
 				}
 			}
 		clean_textures();
@@ -688,8 +671,10 @@ void main()
 
 	~image_viewer() {
 		glDeleteTextures(1, &white_texID);
-		for (auto &[tex_key, ID] : texture_IDs)
-			glDeleteTextures(1, &ID);
+		for (auto &[tex_key, tex] : texture_IDs) {
+			GLuint texID = tex.get_or(0);
+			glDeleteTextures(1, &texID);
+		}
 		glDeleteVertexArrays(1, &null_vaoID);
 
 		glfwDestroyWindow(window);

@@ -71,10 +71,12 @@ int compute_image_type(uint8_t *pixels, int w, int h) {
 	return page_type;
 }
 
-template <typename T> class lazy_load {
+template <typename T, typename F = T> class lazy_load {
   private:
 	std::future<T> future;
-	T result;
+	F result;
+
+	F (*transform)(T&&) = nullptr;
 
 	bool unset = false;
 
@@ -82,17 +84,28 @@ template <typename T> class lazy_load {
 	explicit lazy_load(std::future<T> &&fut)
 		: future(std::forward<std::future<T>>(fut)) {}
 
+	explicit lazy_load(std::future<T> &&fut, F (*transfunc)(T&&))
+		: future(std::forward<std::future<T>>(fut)), transform(transfunc) {}
+
 	explicit lazy_load(T &&val) : result(std::forward<T>(val)) {}
 
 	lazy_load() : unset(true) {}
 
-	T get() {
+	F get() {
 		if (future.valid())
-			result = future.get();
+		{
+			if constexpr (std::is_same_v<F, T>)
+				if (transform == nullptr)
+					result = future.get();
+				else
+					result = transform(future.get());
+			else
+				result = transform(future.get());
+		}
 		return result;
 	}
 
-	T get_or(const T &alt) {
+	F get_or(const F &alt) {
 		if (!ready())
 			return alt;
 		return get();
