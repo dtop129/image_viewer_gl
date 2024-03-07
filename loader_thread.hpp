@@ -71,6 +71,43 @@ int compute_image_type(uint8_t *pixels, int w, int h) {
 	return page_type;
 }
 
+template <typename T> class lazy_load {
+  private:
+	std::future<T> future;
+	T result;
+
+	bool unset = false;
+
+  public:
+	explicit lazy_load(std::future<T> &&fut)
+		: future(std::forward<std::future<T>>(fut)) {}
+
+	explicit lazy_load(T &&val) : result(std::forward<T>(val)) {}
+
+	lazy_load() : unset(true) {}
+
+	T get() {
+		if (future.valid())
+			result = future.get();
+		return result;
+	}
+
+	T get_or(const T &alt) {
+		if (!ready())
+			return alt;
+		return get();
+	}
+
+	bool ready() const {
+		return has_value() &&
+			   (!future.valid() ||
+				(future.valid() && future.wait_for(std::chrono::seconds(0)) ==
+									   std::future_status::ready));
+	}
+
+	bool has_value() const { return !unset; }
+};
+
 class texture_load_thread {
   private:
 	std::vector<std::jthread> worker_threads;
@@ -133,10 +170,10 @@ class texture_load_thread {
 		auto future = std::get<2 + n_pr>(request).get_future();
 		{
 			std::scoped_lock lock(mutex);
-			if (width > 0)
-				requests.push_back(std::move(request));
-			else
+			if (width == -2)
 				requests.push_front(std::move(request));
+			else
+				requests.push_back(std::move(request));
 		}
 
 		cv.notify_one();

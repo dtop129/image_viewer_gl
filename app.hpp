@@ -34,10 +34,8 @@ class image_viewer {
 
 	// images vectors
 	std::vector<std::string> image_paths;
-	std::vector<glm::ivec2> image_sizes;
-	std::vector<std::future<glm::ivec2>> loading_image_sizes;
-	std::vector<int> image_types;
-	std::vector<std::future<int>> loading_image_types;
+	std::vector<lazy_load<glm::ivec2>> image_sizes;
+	std::vector<lazy_load<int>> image_types;
 	std::vector<bool> image_removed;
 	std::vector<bool> paging_invert;
 
@@ -56,53 +54,6 @@ class image_viewer {
 	enum class view_mode { manga, single, vertical } curr_view_mode;
 
 	float vertical_offset = 0.f;
-
-	bool advance_current_pos(int dir) {
-		if (curr_image_pos.tag_index == -1)
-			return false;
-
-		image_pos new_pos = try_advance_pos(curr_image_pos, dir);
-
-		if (new_pos == curr_image_pos) {
-			std::cout << "last_in_dir=" << dir << std::endl;
-			return false;
-		}
-
-		curr_image_pos = new_pos;
-		return true;
-	}
-
-	image_pos try_advance_pos(image_pos pos, int dir) {
-		auto tag_it = tags_indices.find(pos.tag);
-		if (tag_it == tags_indices.end())
-			return {-1, -1};
-
-		image_pos start_pos = pos;
-		auto page_start_indices = get_page_start_indices(tag_it->second);
-		int initial_page_start = page_start_indices[pos.tag_index];
-		int page_start = initial_page_start;
-		while (initial_page_start == page_start) {
-			pos.tag_index += dir;
-			if (pos.tag_index == tag_it->second.size() || pos.tag_index == -1) {
-				if ((dir > 0 && std::next(tag_it) == tags_indices.end()) ||
-					(dir < 0 && tag_it == tags_indices.begin()))
-					return start_pos;
-
-				std::advance(tag_it, dir);
-				pos = {tag_it->first,
-					   int(dir > 0 ? 0 : tag_it->second.size() - 1)};
-				page_start_indices = get_page_start_indices(tag_it->second);
-				break;
-			}
-			page_start = page_start_indices[pos.tag_index];
-		}
-
-		return {pos.tag, page_start_indices[pos.tag_index]};
-	}
-
-	int texture_key(int image_index, int width) const {
-		return width | (image_index << 16);
-	}
 
 	void init_window() {
 		if (!glfwInit())
@@ -230,6 +181,68 @@ void main()
 			}
 	}
 
+	bool advance_current_pos(int dir) {
+		if (curr_image_pos.tag_index == -1)
+			return false;
+
+		image_pos new_pos = try_advance_pos(curr_image_pos, dir);
+
+		if (new_pos == curr_image_pos) {
+			std::cout << "last_in_dir=" << dir << std::endl;
+			return false;
+		}
+
+		curr_image_pos = new_pos;
+		return true;
+	}
+
+	image_pos try_advance_pos(image_pos pos, int dir) {
+		auto tag_it = tags_indices.find(pos.tag);
+		if (tag_it == tags_indices.end())
+			return {-1, -1};
+
+		image_pos start_pos = pos;
+		auto page_start_indices = get_page_start_indices(tag_it->second);
+		int initial_page_start = page_start_indices[pos.tag_index];
+		int page_start = initial_page_start;
+		while (initial_page_start == page_start) {
+			pos.tag_index += dir;
+			if (pos.tag_index == tag_it->second.size() || pos.tag_index == -1) {
+				if ((dir > 0 && std::next(tag_it) == tags_indices.end()) ||
+					(dir < 0 && tag_it == tags_indices.begin()))
+					return start_pos;
+
+				std::advance(tag_it, dir);
+				pos = {tag_it->first,
+					   int(dir > 0 ? 0 : tag_it->second.size() - 1)};
+				page_start_indices = get_page_start_indices(tag_it->second);
+				break;
+			}
+			page_start = page_start_indices[pos.tag_index];
+		}
+
+		return {pos.tag, page_start_indices[pos.tag_index]};
+	}
+
+	glm::ivec2 get_image_size(int image_index) {
+		if (!image_sizes[image_index].has_value()) {
+			image_sizes[image_index] =
+				lazy_load(loader_pool.get_image_size(image_paths[image_index]));
+		}
+		return image_sizes[image_index].get();
+	}
+
+	int get_image_type(int image_index) {
+		if (!image_types[image_index].has_value())
+			image_types[image_index] =
+				lazy_load(loader_pool.get_image_type(image_paths[image_index]));
+		return image_types[image_index].get_or(0);
+	}
+
+	int texture_key(int image_index, int width) const {
+		return width | (image_index << 16);
+	}
+
 	void execute_cmd(std::string_view cmd) {
 		auto arg_start = cmd.find_first_of('(');
 
@@ -254,7 +267,10 @@ void main()
 			if (!tag_indices.empty() && tag == curr_image_pos.tag)
 				prev_curr_image_index = tag_indices[curr_image_pos.tag_index];
 
-			for (const auto &image_path : args | std::views::drop(1)) {
+			// if we add the images not in reverse, the first image loading size
+			// will be last in the queue
+			for (const auto &image_path :
+				 args | std::views::drop(1) | std::views::reverse) {
 				if (!std::filesystem::exists(image_path)) {
 					std::cerr << image_path << " not found" << std::endl;
 					continue;
@@ -267,14 +283,12 @@ void main()
 				if (image_index == image_paths.size()) {
 					image_removed.push_back(false);
 					image_paths.push_back(image_path);
-
-					image_sizes.emplace_back(0, 0);
-					loading_image_sizes.push_back(
-						loader_pool.get_image_size(image_path));
-					image_types.push_back(-1);
-					loading_image_types.push_back(
-						loader_pool.get_image_type(image_path));
 					paging_invert.push_back(false);
+
+					image_sizes.emplace_back(
+						loader_pool.get_image_size(image_path));
+					image_sizes.emplace_back();
+					image_types.emplace_back();
 				} else if (image_removed[image_index])
 					image_removed[image_index] = false;
 				else {
@@ -283,18 +297,15 @@ void main()
 				}
 
 				tag_indices.push_back(image_index);
-
-				if (curr_image_pos.tag_index == -1) {
-					curr_image_pos.tag = tag;
-					curr_image_pos.tag_index = image_index;
-					prev_curr_image_index = image_index;
-				}
+			}
+			if (!tag_indices.empty() && curr_image_pos.tag_index == -1) {
+				curr_image_pos.tag = tag;
+				prev_curr_image_index = tag_indices.back();
 			}
 			std::sort(tag_indices.begin(), tag_indices.end(),
 					  [this](int idx1, int idx2) {
 						  return image_paths[idx1] < image_paths[idx2];
 					  });
-
 			if (!tag_indices.empty() && tag == curr_image_pos.tag)
 				curr_image_pos.tag_index =
 					std::find(tag_indices.begin(), tag_indices.end(),
@@ -438,33 +449,6 @@ void main()
 		return texID;
 	}
 
-	// this must block,
-	glm::ivec2 get_image_size(int image_index) {
-		auto &future = loading_image_sizes[image_index];
-		if (future.valid()) {
-			if (future.wait_for(std::chrono::seconds(0)) ==
-				std::future_status::ready)
-				image_sizes[image_index] = future.get();
-			else {
-				glm::ivec2 size;
-				stbi_info(image_paths[image_index].c_str(), &size.x, &size.y,
-						  nullptr);
-				image_sizes[image_index] = size;
-				future = std::future<glm::ivec2>();
-			}
-		}
-
-		return image_sizes[image_index];
-	}
-
-	int get_image_type(int image_index) {
-		auto &future = loading_image_types[image_index];
-		if (future.valid() && future.wait_for(std::chrono::seconds(0)) ==
-								  std::future_status::ready)
-			image_types[image_index] = future.get();
-		return image_types[image_index];
-	}
-
 	glm::ivec4 vertical_slice_center(int image_index) {
 		int strip_width = std::min(600, window_size.x * 4 / 5);
 		glm::ivec2 image_size = get_image_size(image_index);
@@ -481,11 +465,9 @@ void main()
 
 		int image_index = tag_indices[pos.tag_index];
 		glm::ivec2 start_image_size = get_image_size(image_index);
-		if (image_types[image_index] == -1 &&
-			start_image_size.x > start_image_size.y * 0.8) {
-			image_types[image_index] = 3;
-			loading_image_types[image_index] = std::future<int>();
-		}
+		if (!image_types[image_index].ready() &&
+			start_image_size.x > start_image_size.y * 0.8)
+			image_types[image_index] = lazy_load(3);
 
 		const auto tag_page_starts = get_page_start_indices(tag_indices);
 
@@ -497,7 +479,7 @@ void main()
 			if (tag_page_starts[page_end_index] != page_start_index)
 				break;
 
-		int start_height = get_image_size(tag_indices[page_start_index]).y;
+		int start_height = start_image_size.y;
 		glm::vec2 rect_size(0, start_height);
 
 		for (int tag_index = page_start_index; tag_index < page_end_index;
@@ -579,8 +561,6 @@ void main()
 				++it;
 			}
 		}
-		// std::cout << loading_texdata.size() << " " << texture_IDs.size()
-		// << std::endl;
 	}
 
 	std::vector<int> get_page_start_indices(const std::vector<int> &indices) {
@@ -653,15 +633,14 @@ void main()
 				for (auto [pos, size_offset] : center_page(pos)) {
 					int image_index = tags_indices[pos.tag][pos.tag_index];
 					int tex_key = texture_key(image_index, size_offset.x);
+
 					texture_used[tex_key] = true;
-
-					if (texture_IDs.contains(tex_key) ||
-						loading_texdata.contains(tex_key))
-						continue;
-
-					loading_texdata.emplace(
-						tex_key, loader_pool.load_texture(
-									 image_paths[image_index], size_offset.x));
+					if (!texture_IDs.contains(tex_key) &&
+						!loading_texdata.contains(tex_key))
+						loading_texdata.emplace(
+							tex_key,
+							loader_pool.load_texture(image_paths[image_index],
+													 size_offset.x));
 				}
 			}
 		clean_textures();
@@ -703,10 +682,7 @@ void main()
 			render();
 			glfwSwapBuffers(window);
 
-			// std::this_thread::sleep_for(std::chrono::microseconds(int(1000000
-			// * (1.0 / 20 - (glfwGetTime() - last_t)))));
 			dt = glfwGetTime() - last_t;
-			// std::cout << 1 / dt << std::endl;
 		}
 	}
 
