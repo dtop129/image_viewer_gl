@@ -55,7 +55,7 @@ class image_viewer {
 
 	// images vectors
 	std::vector<std::string> image_paths;
-	std::vector<lazy_load<glm::ivec2>> image_sizes;
+	std::vector<glm::ivec2> image_sizes;
 	std::vector<lazy_load<int>> image_types;
 	std::vector<bool> image_removed;
 	std::vector<bool> paging_invert;
@@ -268,7 +268,6 @@ void main()
 			return false;
 		}
 
-
 		return true;
 	}
 
@@ -301,14 +300,10 @@ void main()
 	}
 
 	glm::ivec2 get_image_size(int image_index) {
-		if (!image_sizes[image_index].ready()) {
-			glm::ivec2 size;
-			stbi_info(image_paths[image_index].c_str(), &size.x, &size.y,
-					  nullptr);
-			image_sizes[image_index] = lazy_load(size);
-		}
+		if (image_sizes[image_index].x == -1)
+			stbi_info(image_paths[image_index].c_str(), &image_sizes[image_index].x, &image_sizes[image_index].y, nullptr);
 
-		return image_sizes[image_index].get();
+		return image_sizes[image_index];
 	}
 
 	int get_image_type(int image_index) {
@@ -346,10 +341,8 @@ void main()
 			if (!tag_indices.empty() && tag == curr_image_pos.tag)
 				prev_curr_image_index = tag_indices[curr_image_pos.tag_index];
 
-			// if we add the images not in reverse, the first image loading size
-			// will be last in the queue
 			for (const auto &image_path :
-				 args | std::views::drop(1) | std::views::reverse) {
+				 args | std::views::drop(1)) {
 				if (!std::filesystem::exists(image_path)) {
 					std::cerr << image_path << " not found" << std::endl;
 					continue;
@@ -364,8 +357,7 @@ void main()
 					image_paths.push_back(image_path);
 					paging_invert.push_back(false);
 
-					image_sizes.emplace_back(
-						loader_pool.get_image_size(image_path));
+					image_sizes.emplace_back(-1, -1);
 					image_types.emplace_back();
 				} else if (image_removed[image_index])
 					image_removed[image_index] = false;
@@ -378,7 +370,7 @@ void main()
 			}
 			if (!tag_indices.empty() && curr_image_pos.tag_index == -1) {
 				curr_image_pos.tag = tag;
-				prev_curr_image_index = tag_indices.back();
+				prev_curr_image_index = tag_indices.front();
 			}
 			std::sort(tag_indices.begin(), tag_indices.end(),
 					  [this](int idx1, int idx2) {
@@ -491,7 +483,7 @@ void main()
 		fix_vertical_limits();
 		if (offset != 0 && start_pos == curr_image_pos &&
 			start_offset == vertical_offset) {
-			std::cout << "last_in_dir=" << (offset > 0) - (offset < 0)
+			std::cout << "last_in_dir=" << (offset < 0.f) - (offset > 0.f)
 					  << std::endl;
 		}
 	}
@@ -553,14 +545,14 @@ void main()
 		return tex;
 	}
 
-	glm::ivec4 vertical_slice_center(int image_index) {
-		int strip_width = std::min(600, window_size.x * 4 / 5);
-		glm::ivec2 image_size = get_image_size(image_index);
+	glm::vec4 vertical_slice_center(int image_index) {
+		float strip_width = std::min(600.f, window_size.x * 0.8f);
+		glm::vec2 image_size = get_image_size(image_index);
 		return {strip_width, image_size.y * strip_width / image_size.x,
-				(window_size.x - strip_width) / 2, 0};
+				(window_size.x - strip_width) * 0.5f, 0.f};
 	}
 
-	std::vector<std::pair<image_pos, glm::ivec4>> center_page(image_pos pos) {
+	std::vector<std::pair<image_pos, glm::vec4>> center_page(image_pos pos) {
 		if (curr_view_mode == view_mode::vertical)
 			return {{pos, vertical_slice_center(
 							  tags_indices[pos.tag][pos.tag_index])}};
@@ -568,9 +560,9 @@ void main()
 		const auto &tag_indices = tags_indices[pos.tag];
 
 		int image_index = tag_indices[pos.tag_index];
-		glm::ivec2 start_image_size = get_image_size(image_index);
+		glm::vec2 start_image_size = get_image_size(image_index);
 		if (!image_types[image_index].ready() &&
-			start_image_size.x > start_image_size.y * 0.8)
+			start_image_size.x > start_image_size.y * 0.8f)
 			image_types[image_index] = lazy_load(3);
 
 		const auto tag_page_starts = get_page_start_indices(tag_indices);
@@ -583,12 +575,12 @@ void main()
 			if (tag_page_starts[page_end_index] != page_start_index)
 				break;
 
-		int start_height = start_image_size.y;
+		float start_height = start_image_size.y;
 		glm::vec2 rect_size(0, start_height);
 
 		for (int tag_index = page_start_index; tag_index < page_end_index;
 			 ++tag_index) {
-			glm::ivec2 image_size = get_image_size(tag_indices[tag_index]);
+			glm::vec2 image_size = get_image_size(tag_indices[tag_index]);
 			rect_size.x += image_size.x * start_height / image_size.y;
 		}
 
@@ -596,19 +588,19 @@ void main()
 		float scale_y = window_size.y / static_cast<float>(rect_size.y);
 		float scale = std::min(scale_x, scale_y);
 
-		glm::ivec2 scaled_size = glm::vec2(rect_size) * scale;
-		glm::ivec2 offset = (window_size - scaled_size) / 2;
+		glm::vec2 scaled_size = rect_size * scale;
+		glm::vec2 offset = (glm::vec2(window_size) - scaled_size) * 0.5f;
 
-		std::vector<std::pair<image_pos, glm::ivec4>> sizes_offsets;
-		int running_offset = 0;
+		std::vector<std::pair<image_pos, glm::vec4>> sizes_offsets;
+		float running_offset = 0;
 		for (int tag_index = page_end_index - 1; tag_index >= page_start_index;
 			 --tag_index) {
-			glm::ivec2 image_size = get_image_size(tag_indices[tag_index]);
-			int scaled_width = image_size.x * scaled_size.y / image_size.y;
+			glm::vec2 image_size = get_image_size(tag_indices[tag_index]);
+			float scaled_width = image_size.x * scaled_size.y / image_size.y;
 
 			sizes_offsets.emplace(
 				sizes_offsets.begin(), image_pos(pos.tag, tag_index),
-				glm::ivec4(scaled_width, scaled_size.y,
+				glm::vec4(scaled_width, scaled_size.y,
 						   offset.x + running_offset, offset.y));
 
 			running_offset += scaled_width;
@@ -617,8 +609,8 @@ void main()
 		return sizes_offsets;
 	}
 
-	std::vector<std::pair<image_pos, glm::ivec4>> get_current_render_data() {
-		std::vector<std::pair<image_pos, glm::ivec4>> sizes_offsets;
+	std::vector<std::pair<image_pos, glm::vec4>> get_current_render_data() {
+		std::vector<std::pair<image_pos, glm::vec4>> sizes_offsets;
 		if (curr_image_pos.tag_index == -1)
 			return sizes_offsets;
 
@@ -630,7 +622,7 @@ void main()
 				image_pos prev_pos = try_advance_pos(pos, -1);
 				if (prev_pos != pos) {
 					pos = prev_pos;
-					glm::ivec4 scaled_size_offset = vertical_slice_center(
+					glm::vec4 scaled_size_offset = vertical_slice_center(
 						tags_indices[pos.tag][pos.tag_index]);
 
 					offset_y -= scaled_size_offset.y;
@@ -638,7 +630,7 @@ void main()
 					break;
 			}
 			while (offset_y < window_size.y) {
-				glm::ivec4 scaled_size_offset =
+				glm::vec4 scaled_size_offset =
 					vertical_slice_center(tags_indices[pos.tag][pos.tag_index]);
 				scaled_size_offset.w += offset_y;
 

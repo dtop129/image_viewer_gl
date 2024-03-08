@@ -138,7 +138,7 @@ class texture_load_thread {
 	std::vector<std::jthread> worker_threads;
 
 	using req_type = std::tuple<std::string, int, std::promise<image_data>,
-								std::promise<glm::ivec2>, std::promise<int>>;
+								std::promise<int>>;
 
 	std::deque<req_type> requests;
 
@@ -156,22 +156,16 @@ class texture_load_thread {
 			if (stop)
 				return;
 
-			auto [req_path, req_width, pixel_pr, size_pr, type_pr] =
+			auto [req_path, req_width, pixel_pr, type_pr] =
 				std::move(requests.back());
 			requests.pop_back();
 			lk.unlock();
 
 			int width, height;
-			if (req_width == -1) {
-				stbi_info(req_path.c_str(), &width, &height, nullptr);
-				size_pr.set_value({width, height});
-				continue;
-			}
-
 			uint8_t *pixels =
 				stbi_load(req_path.c_str(), &width, &height, nullptr, 4);
 
-			if (req_width == -2)
+			if (req_width == -1)
 				type_pr.set_value(compute_image_type(pixels, width, height));
 			else {
 				image_data data;
@@ -195,7 +189,7 @@ class texture_load_thread {
 		auto future = std::get<2 + n_pr>(request).get_future();
 		{
 			std::scoped_lock lock(mutex);
-			if (width < 0)
+			if (width == -1)
 				requests.push_front(std::move(request));
 			else
 				requests.push_back(std::move(request));
@@ -222,10 +216,7 @@ class texture_load_thread {
 	std::future<image_data> load_texture(const std::string &path, int width) {
 		return add_request<0>(path, width);
 	}
-	std::future<glm::ivec2> get_image_size(const std::string &path) {
-		return add_request<1>(path, -1);
-	}
 	std::future<int> get_image_type(const std::string &path) {
-		return add_request<2>(path, -2);
+		return add_request<1>(path, -1);
 	}
 };
