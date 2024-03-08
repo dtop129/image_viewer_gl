@@ -23,8 +23,6 @@ struct image_data {
 
 int compute_image_type(uint8_t *pixels, glm::ivec2 size) {
 	int w = size.x, h = size.y;
-	if (w > 0.8 * h)
-		return 3;
 
 	// change to greyscale column major
 	std::vector<uint8_t> pixels_cm;
@@ -164,23 +162,43 @@ class texture_load_thread {
 			lk.unlock();
 
 			glm::ivec2 size;
-			uint8_t *pixels =
-				stbi_load(req_path.c_str(), &size.x, &size.y, nullptr, 4);
+			FILE *f = stbi__fopen(req_path.c_str(), "rb");
 
-			if (req_size.x == 0)
-				type_pr.set_value(compute_image_type(pixels, size));
-			else {
-				size_pr.set_value(size);
-				image_data data;
-				data.size = req_size;
-				data.pixels.resize(req_size.x * req_size.y * 4);
-				resizer.resizeImage(pixels, size.x, size.y, data.pixels.data(),
-									req_size.x, req_size.y, 4);
-
-				pixel_pr.set_value(data);
+			bool type_set = false;
+			stbi_info_from_file(f, &size.x, &size.y, nullptr);
+			if (size.x > size.y * 0.8)
+			{
+				type_set = true;
+				type_pr.set_value(3);
+				if (req_size.x == 0) {
+					fclose(f);
+					continue;
+				}
 			}
 
+			size_pr.set_value(size);
+			uint8_t *pixels =
+				stbi_load_from_file(f, &size.x, &size.y, nullptr, 4);
+
+			if (!type_set)
+			{
+				type_pr.set_value(compute_image_type(pixels, size));
+				if (req_size.x == 0) {
+					stbi_image_free(pixels);
+					fclose(f);
+					continue;
+				}
+			}
+
+			image_data data;
+			data.size = req_size;
+			data.pixels.resize(req_size.x * req_size.y * 4);
+			resizer.resizeImage(pixels, size.x, size.y, data.pixels.data(),
+								req_size.x, req_size.y, 4);
+
+			pixel_pr.set_value(data);
 			stbi_image_free(pixels);
+			fclose(f);
 		}
 	}
 
@@ -196,26 +214,25 @@ class texture_load_thread {
 		cv.notify_all();
 	}
 
-	std::pair<std::future<image_data>, std::future<glm::ivec2>>
-	load_texture(const std::string &path, glm::ivec2 size) {
+	auto load_texture(const std::string &path, glm::ivec2 size) {
 		std::scoped_lock lk(mutex);
 		auto &request = requests.emplace_back(
 			path, size, std::promise<image_data>(), std::promise<glm::ivec2>(),
 			std::promise<int>());
 		cv.notify_one();
 
-		return {std::get<2>(request).get_future(),
-				std::get<3>(request).get_future()};
+		return std::tuple{std::get<2>(request).get_future(),
+						  std::get<3>(request).get_future(),
+						  std::get<4>(request).get_future()};
 	}
 
-	std::future<int> get_image_type(const std::string &path) {
+	auto get_image_type(const std::string &path) {
 		std::scoped_lock lk(mutex);
-		auto request_it =
-			requests.emplace(requests.begin(), path, glm::ivec2(0, 0),
-							 std::promise<image_data>(),
-							 std::promise<glm::ivec2>(), std::promise<int>());
+		auto &request = requests.emplace_front(
+			path, glm::ivec2(0, 0), std::promise<image_data>(),
+			std::promise<glm::ivec2>(), std::promise<int>());
 		cv.notify_one();
 
-		return std::get<4>(*request_it).get_future();
+		return std::get<4>(request).get_future();
 	}
 };

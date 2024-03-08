@@ -50,7 +50,7 @@ class image_viewer {
 
 	texture_load_thread loader_pool;
 	// key for following maps is texture_key(image_index, texture)
-	std::unordered_map<int64_t, lazy_load<image_data, GLtexture>> texture_IDs;
+	std::unordered_map<int64_t, lazy_load<image_data, GLtexture>> textures;
 	std::unordered_map<int64_t, bool> texture_used;
 
 	// images vectors
@@ -260,6 +260,29 @@ void main()
 		return true;
 	}
 
+	void preload_close_image_types() {
+		auto tag_it = tags_indices.find(curr_image_pos.tag);
+		if (tag_it == tags_indices.end() || curr_view_mode != view_mode::manga)
+			return;
+
+		image_pos pos = curr_image_pos;
+		for (int i = 0; i < 10; i++) {
+			pos.tag_index += 1;
+			if (pos.tag_index == tag_it->second.size()) {
+				std::advance(tag_it, 1);
+				if (tag_it == tags_indices.end())
+					return;
+
+				pos = {tag_it->first, 0};
+			}
+
+			int image_index = tags_indices[pos.tag][pos.tag_index];
+			if (!image_types[image_index].has_value())
+				image_types[image_index] = lazy_load(
+					loader_pool.get_image_type(image_paths[image_index]));
+		}
+	}
+
 	bool advance_current_pos(int dir) {
 		if (curr_image_pos.tag_index == -1)
 			return false;
@@ -313,17 +336,10 @@ void main()
 	}
 
 	glm::ivec2 get_image_size(int image_index) {
-		glm::ivec2 default_size(1000, 1414);
-		if (get_image_type(image_index) == 3)
-			default_size.x = 2000;
-
-		return image_sizes[image_index].get_or(default_size);
+		return image_sizes[image_index].get_or({1000, 1414});
 	}
 
 	int get_image_type(int image_index) {
-		if (!image_types[image_index].has_value())
-			image_types[image_index] =
-				lazy_load(loader_pool.get_image_type(image_paths[image_index]));
 		return image_types[image_index].get_or(0);
 	}
 
@@ -383,19 +399,25 @@ void main()
 
 				tag_indices.push_back(image_index);
 			}
+
+			image_pos new_pos = curr_image_pos;
 			if (!tag_indices.empty() && curr_image_pos.tag_index == -1) {
-				curr_image_pos.tag = tag;
+				new_pos.tag = tag;
 				prev_curr_image_index = tag_indices.front();
 			}
 			std::sort(tag_indices.begin(), tag_indices.end(),
 					  [this](int idx1, int idx2) {
 						  return image_paths[idx1] < image_paths[idx2];
 					  });
-			if (!tag_indices.empty() && tag == curr_image_pos.tag)
-				curr_image_pos.tag_index =
+
+			if (!tag_indices.empty() && curr_image_pos.tag_index == -1) {
+				new_pos.tag_index =
 					std::find(tag_indices.begin(), tag_indices.end(),
 							  prev_curr_image_index) -
 					tag_indices.begin();
+
+				set_curr_image_pos(new_pos);
+			}
 
 			if (tag_indices.empty())
 				tags_indices.erase(tag);
@@ -518,17 +540,19 @@ void main()
 		int64_t tex_key = texture_key(image_index, size);
 		texture_used[tex_key] = true;
 
-		auto tex_it = texture_IDs.find(tex_key);
-		if (tex_it != texture_IDs.end())
+		auto tex_it = textures.find(tex_key);
+		if (tex_it != textures.end())
 			return tex_it->second;
 
-		auto [texdata_fut, image_size_fut] =
+		auto [texdata_fut, image_size_fut, image_type_fut] =
 			loader_pool.load_texture(image_paths[image_index], size);
 
 		if (!image_sizes[image_index].has_value())
 			image_sizes[image_index] = lazy_load(std::move(image_size_fut));
+		if (!image_types[image_index].has_value())
+			image_types[image_index] = lazy_load(std::move(image_type_fut));
 
-		return texture_IDs
+		return textures
 			.try_emplace(
 				tex_key, std::move(texdata_fut),
 				[](auto &&loaded_data) {
@@ -555,11 +579,10 @@ void main()
 			preload_texture(image_index, size).get_or(white_tex);
 		if (tex.id() == white_tex.id()) {
 			auto loaded_it = std::find_if(
-				texture_IDs.begin(), texture_IDs.end(),
-				[image_index](auto &tex) {
+				textures.begin(), textures.end(), [image_index](auto &tex) {
 					return tex.first >> 32 == image_index && tex.second.ready();
 				});
-			if (loaded_it != texture_IDs.end()) {
+			if (loaded_it != textures.end()) {
 				texture_used[loaded_it->first] = true;
 				return loaded_it->second.get();
 			}
@@ -602,6 +625,7 @@ void main()
 
 				start = i + 1;
 				first_alone_score = 0;
+				invert_alone = false;
 				continue;
 			}
 
@@ -635,10 +659,6 @@ void main()
 
 		int image_index = tag_indices[pos.tag_index];
 		glm::vec2 start_image_size = get_image_size(image_index);
-		if (start_image_size.x >
-			start_image_size.y * 0.8f) // even if was already loaded in the
-									   // background, this condition is absolute
-			image_types[image_index] = lazy_load(3);
 
 		const auto tag_page_starts = get_page_start_indices(tag_indices);
 
@@ -732,9 +752,9 @@ void main()
 		for (auto it = texture_used.begin(); it != texture_used.end();) {
 			auto &[tex_key, used] = *it;
 			if (!used) {
-				auto texID_it = texture_IDs.find(tex_key);
-				if (texID_it != texture_IDs.end())
-					texture_IDs.erase(texID_it);
+				auto texID_it = textures.find(tex_key);
+				if (texID_it != textures.end())
+					textures.erase(texID_it);
 
 				it = texture_used.erase(it);
 			} else {
@@ -767,13 +787,14 @@ void main()
 				for (auto [pos, size_offset] : center_page(pos))
 					preload_texture(tags_indices[pos.tag][pos.tag_index],
 									{size_offset.x, size_offset.y});
+		preload_close_image_types();
 
-		// if (current_image_indices != last_image_indices) {
-		//	std::cout << "current_image=";
-		//	for (auto index : current_image_indices)
-		//		std::cout << image_paths[index] << '\t';
-		//	std::cout << std::endl;
-		// }
+		if (current_image_indices != last_image_indices) {
+			std::cout << "current_image=";
+			for (auto index : current_image_indices)
+				std::cout << image_paths[index] << '\t';
+			std::cout << std::endl;
+		}
 		last_image_indices = current_image_indices;
 
 		clean_textures();
@@ -797,19 +818,15 @@ void main()
 
 		std::cout << "current_mode=manga" << std::endl;
 
-		double dt = 0;
+		int i = 0;
 		while (!glfwWindowShouldClose(window)) {
-			double last_t = glfwGetTime();
 			glfwPollEvents();
 			handle_stdin();
 
 			glClear(GL_COLOR_BUFFER_BIT);
-			render();
+			if (i++ > 5)
+				render();
 			glfwSwapBuffers(window);
-
-			dt = glfwGetTime() - last_t;
-			if (1 / dt < 50)
-				std::cout << 1 / dt << std::endl;
 		}
 	}
 
