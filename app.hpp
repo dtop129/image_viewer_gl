@@ -700,7 +700,7 @@ void main()
 				glm::round(glm::vec4(scaled_size, offset.x + running_offset,
 									 offset.y)));
 
-			running_offset += scaled_width;
+			running_offset += sizes_offsets.back().second.x;
 		}
 
 		return sizes_offsets;
