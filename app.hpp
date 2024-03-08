@@ -169,6 +169,7 @@ void main()
 		glViewport(0, 0, width, height);
 
 		window_size = {width, height};
+		fix_vertical_limits();
 	}
 
 	void on_key(int key, int action) {
@@ -248,20 +249,26 @@ void main()
 		if (curr_image_pos.tag_index == -1)
 			return false;
 
-		vertical_offset = 0;
+		image_pos start_pos = curr_image_pos;
+		float start_vertical_offset = vertical_offset;
 
 		if (curr_view_mode == view_mode::vertical)
-			if (vertical_offset < 0 && dir < 1)
+			if (start_vertical_offset < 0 && dir < 1) {
+				vertical_offset = 0.f;
 				return false;
+			}
 
-		image_pos new_pos = try_advance_pos(curr_image_pos, dir);
+		curr_image_pos = try_advance_pos(curr_image_pos, dir);
+		if (start_pos != curr_image_pos)
+			vertical_offset = 0.f;
 
-		if (new_pos == curr_image_pos) {
+		fix_vertical_limits();
+		if (start_pos == curr_image_pos) {
 			std::cout << "last_in_dir=" << dir << std::endl;
 			return false;
 		}
 
-		curr_image_pos = new_pos;
+
 		return true;
 	}
 
@@ -453,11 +460,7 @@ void main()
 		curr_view_mode = new_mode;
 	}
 
-	void fix_vertical_limits()
-	{
-		if (curr_view_mode != view_mode::vertical)
-			return;
-
+	void fix_vertical_limits() {
 		auto new_render_data = get_current_render_data();
 		if (new_render_data.empty())
 			return;
@@ -472,15 +475,25 @@ void main()
 
 		auto &[first_pos, first_size_offset] = new_render_data.front();
 		float upper_edge = first_size_offset.w;
-		if (upper_edge > 0.f)
-			vertical_offset -= upper_edge;
+
+		curr_image_pos = first_pos;
+		vertical_offset = upper_edge > 0.f ? 0.f : first_size_offset.w;
 	}
 
 	void vertical_scroll(float offset) {
 		if (curr_view_mode != view_mode::vertical)
 			return;
 
+		image_pos start_pos = curr_image_pos;
+		float start_offset = vertical_offset;
 		vertical_offset += offset;
+
+		fix_vertical_limits();
+		if (offset != 0 && start_pos == curr_image_pos &&
+			start_offset == vertical_offset) {
+			std::cout << "last_in_dir=" << (offset > 0) - (offset < 0)
+					  << std::endl;
+		}
 	}
 
 	void handle_keys(float dt) {
@@ -606,27 +619,24 @@ void main()
 
 	std::vector<std::pair<image_pos, glm::ivec4>> get_current_render_data() {
 		std::vector<std::pair<image_pos, glm::ivec4>> sizes_offsets;
-		if (curr_image_pos.tag_index == -1) {
-			vertical_offset = 0;
+		if (curr_image_pos.tag_index == -1)
 			return sizes_offsets;
-		}
 
 		if (curr_view_mode == view_mode::vertical) {
 			image_pos pos = curr_image_pos;
+			float offset_y = vertical_offset;
 
-			while (vertical_offset > 0) {
+			while (offset_y > 0) {
 				image_pos prev_pos = try_advance_pos(pos, -1);
 				if (prev_pos != pos) {
 					pos = prev_pos;
 					glm::ivec4 scaled_size_offset = vertical_slice_center(
 						tags_indices[pos.tag][pos.tag_index]);
 
-					vertical_offset -= scaled_size_offset.y;
+					offset_y -= scaled_size_offset.y;
 				} else
 					break;
 			}
-
-			float offset_y = vertical_offset;
 			while (offset_y < window_size.y) {
 				glm::ivec4 scaled_size_offset =
 					vertical_slice_center(tags_indices[pos.tag][pos.tag_index]);
@@ -641,12 +651,6 @@ void main()
 					break;
 				else
 					pos = new_pos;
-			}
-
-			// auto fix curr_image_pos
-			if (!sizes_offsets.empty()) {
-				curr_image_pos = sizes_offsets.front().first;
-				vertical_offset = sizes_offsets.front().second.w;
 			}
 		} else if (curr_view_mode == view_mode::manga ||
 				   curr_view_mode == view_mode::single)
@@ -722,7 +726,6 @@ void main()
 	}
 
 	void render() {
-		fix_vertical_limits();
 		auto current_render_data = get_current_render_data();
 		std::vector<int> current_image_indices;
 		for (auto [pos, size_offset] : current_render_data) {
