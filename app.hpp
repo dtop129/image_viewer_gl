@@ -255,7 +255,15 @@ void main()
 		if (new_pos == curr_image_pos)
 			return false;
 
-		vertical_offset = 0.f;
+		int prev_image_index = -1, new_image_index = -1;
+		if (curr_image_pos.tag_index != -1)
+			prev_image_index = tags_indices[curr_image_pos.tag][curr_image_pos.tag_index];
+		if (new_pos.tag_index != -1)
+			new_image_index = tags_indices[new_pos.tag][new_pos.tag_index];
+
+		if (new_image_index != prev_image_index)
+			vertical_offset = 0.f;
+
 		curr_image_pos = new_pos;
 		return true;
 	}
