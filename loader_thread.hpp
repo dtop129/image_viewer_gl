@@ -137,7 +137,7 @@ class texture_load_thread {
   private:
 	std::vector<std::jthread> worker_threads;
 
-	using req_type = std::tuple<std::string, int, std::promise<image_data>,
+	using req_type = std::tuple<std::string, glm::ivec2, std::promise<image_data>,
 								std::promise<int>>;
 
 	std::deque<req_type> requests;
@@ -156,7 +156,7 @@ class texture_load_thread {
 			if (stop)
 				return;
 
-			auto [req_path, req_width, pixel_pr, type_pr] =
+			auto [req_path, req_size, pixel_pr, type_pr] =
 				std::move(requests.back());
 			requests.pop_back();
 			lk.unlock();
@@ -165,15 +165,14 @@ class texture_load_thread {
 			uint8_t *pixels =
 				stbi_load(req_path.c_str(), &width, &height, nullptr, 4);
 
-			if (req_width == -1)
+			if (req_size.x == 0)
 				type_pr.set_value(compute_image_type(pixels, width, height));
 			else {
 				image_data data;
-				int req_height = height * req_width / width;
-				data.size = {req_width, req_height};
-				data.pixels.resize(req_width * req_height * 4);
+				data.size = req_size;
+				data.pixels.resize(req_size.x * req_size.y * 4);
 				resizer.resizeImage(pixels, width, height, data.pixels.data(),
-									req_width, req_height, 4);
+									req_size.x, req_size.y, 4);
 
 				pixel_pr.set_value(data);
 			}
@@ -182,14 +181,14 @@ class texture_load_thread {
 		}
 	}
 
-	template <int n_pr> auto add_request(const std::string &path, int width) {
+	template <int n_pr> auto add_request(const std::string &path, glm::ivec2 size) {
 		req_type request;
 		std::get<0>(request) = path;
-		std::get<1>(request) = width;
+		std::get<1>(request) = size;
 		auto future = std::get<2 + n_pr>(request).get_future();
 		{
 			std::scoped_lock lock(mutex);
-			if (width == -1)
+			if (size.x == 0)
 				requests.push_front(std::move(request));
 			else
 				requests.push_back(std::move(request));
@@ -213,10 +212,10 @@ class texture_load_thread {
 		cv.notify_all();
 	}
 
-	std::future<image_data> load_texture(const std::string &path, int width) {
-		return add_request<0>(path, width);
+	std::future<image_data> load_texture(const std::string &path, glm::ivec2 size) {
+		return add_request<0>(path, size);
 	}
 	std::future<int> get_image_type(const std::string &path) {
-		return add_request<1>(path, -1);
+		return add_request<1>(path, {0, 0});
 	}
 };
