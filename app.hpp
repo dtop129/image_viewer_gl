@@ -255,16 +255,8 @@ void main()
 		if (new_pos == curr_image_pos)
 			return false;
 
-		int prev_image_index = -1, new_image_index = -1;
-		if (curr_image_pos.tag_index != -1)
-			prev_image_index = tags_indices[curr_image_pos.tag][curr_image_pos.tag_index];
-		if (new_pos.tag_index != -1)
-			new_image_index = tags_indices[new_pos.tag][new_pos.tag_index];
-
-		if (new_image_index != prev_image_index)
-			vertical_offset = 0.f;
-
 		curr_image_pos = new_pos;
+		vertical_offset = 0.f;
 		return true;
 	}
 
@@ -427,7 +419,7 @@ void main()
 							  prev_curr_image_index) -
 					tag_indices.begin();
 
-				set_curr_image_pos({tag, correct_tag_index});
+				curr_image_pos = {tag, correct_tag_index};
 			}
 		} else if (type == "goto_tag" || type == "remove_tag") {
 			int tag = std::stoi(args[0]);
@@ -654,8 +646,8 @@ void main()
 		glm::vec2 image_size = get_image_size(image_index);
 		glm::vec2 scaled_size(strip_width,
 							  image_size.y * strip_width / image_size.x);
-		return {glm::round(scaled_size), (window_size.x - strip_width) * 0.5f,
-				0.f};
+		return glm::round(
+			glm::vec4(scaled_size, (window_size.x - strip_width) * 0.5f, 0.f));
 	}
 
 	std::vector<std::pair<image_pos, glm::vec4>> center_page(image_pos pos) {
@@ -705,8 +697,8 @@ void main()
 
 			sizes_offsets.emplace(
 				sizes_offsets.begin(), image_pos(pos.tag, tag_index),
-				glm::vec4(glm::round(scaled_size), offset.x + running_offset,
-						  offset.y));
+				glm::round(glm::vec4(scaled_size, offset.x + running_offset,
+									 offset.y)));
 
 			running_offset += scaled_width;
 		}
@@ -777,11 +769,9 @@ void main()
 		std::vector<int> current_image_indices;
 		for (auto [pos, size_offset] : current_render_data) {
 			int image_index = tags_indices[pos.tag][pos.tag_index];
-
 			glBindTextureUnit(
 				0,
 				get_texture(image_index, {size_offset.x, size_offset.y}).id());
-
 			glProgramUniform2f(program.id(), 1, size_offset.z, size_offset.w);
 			glProgramUniform2f(program.id(), 2, size_offset.x, size_offset.y);
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
