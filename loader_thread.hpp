@@ -21,7 +21,8 @@ struct image_data {
 	glm::ivec2 size;
 };
 
-int compute_image_type(uint8_t *pixels, int w, int h) {
+int compute_image_type(uint8_t *pixels, glm::ivec2 size) {
+	int w = size.x, h = size.y;
 	if (w > 0.8 * h)
 		return 3;
 
@@ -137,8 +138,9 @@ class texture_load_thread {
   private:
 	std::vector<std::jthread> worker_threads;
 
-	using req_type = std::tuple<std::string, glm::ivec2, std::promise<image_data>,
-								std::promise<int>>;
+	using req_type =
+		std::tuple<std::string, glm::ivec2, std::promise<image_data>,
+				   std::promise<glm::ivec2>, std::promise<int>>;
 
 	std::deque<req_type> requests;
 
@@ -156,22 +158,23 @@ class texture_load_thread {
 			if (stop)
 				return;
 
-			auto [req_path, req_size, pixel_pr, type_pr] =
+			auto [req_path, req_size, pixel_pr, size_pr, type_pr] =
 				std::move(requests.back());
 			requests.pop_back();
 			lk.unlock();
 
-			int width, height;
+			glm::ivec2 size;
 			uint8_t *pixels =
-				stbi_load(req_path.c_str(), &width, &height, nullptr, 4);
+				stbi_load(req_path.c_str(), &size.x, &size.y, nullptr, 4);
 
 			if (req_size.x == 0)
-				type_pr.set_value(compute_image_type(pixels, width, height));
+				type_pr.set_value(compute_image_type(pixels, size));
 			else {
+				size_pr.set_value(size);
 				image_data data;
 				data.size = req_size;
 				data.pixels.resize(req_size.x * req_size.y * 4);
-				resizer.resizeImage(pixels, width, height, data.pixels.data(),
+				resizer.resizeImage(pixels, size.x, size.y, data.pixels.data(),
 									req_size.x, req_size.y, 4);
 
 				pixel_pr.set_value(data);
@@ -181,23 +184,6 @@ class texture_load_thread {
 		}
 	}
 
-	template <int n_pr> auto add_request(const std::string &path, glm::ivec2 size) {
-		req_type request;
-		std::get<0>(request) = path;
-		std::get<1>(request) = size;
-		auto future = std::get<2 + n_pr>(request).get_future();
-		{
-			std::scoped_lock lock(mutex);
-			if (size.x == 0)
-				requests.push_front(std::move(request));
-			else
-				requests.push_back(std::move(request));
-		}
-
-		cv.notify_one();
-		return future;
-	}
-
   public:
 	explicit texture_load_thread(unsigned int n_workers) {
 		for (int i = 0; i < n_workers; ++i)
@@ -205,17 +191,31 @@ class texture_load_thread {
 	}
 
 	~texture_load_thread() {
-		{
-			std::scoped_lock lk(mutex);
-			stop = true;
-		}
+		std::scoped_lock lk(mutex);
+		stop = true;
 		cv.notify_all();
 	}
 
-	std::future<image_data> load_texture(const std::string &path, glm::ivec2 size) {
-		return add_request<0>(path, size);
+	std::pair<std::future<image_data>, std::future<glm::ivec2>>
+	load_texture(const std::string &path, glm::ivec2 size) {
+		std::scoped_lock lk(mutex);
+		auto &request = requests.emplace_back(
+			path, size, std::promise<image_data>(), std::promise<glm::ivec2>(),
+			std::promise<int>());
+		cv.notify_one();
+
+		return {std::get<2>(request).get_future(),
+				std::get<3>(request).get_future()};
 	}
+
 	std::future<int> get_image_type(const std::string &path) {
-		return add_request<1>(path, {0, 0});
+		std::scoped_lock lk(mutex);
+		auto request_it =
+			requests.emplace(requests.begin(), path, glm::ivec2(0, 0),
+							 std::promise<image_data>(),
+							 std::promise<glm::ivec2>(), std::promise<int>());
+		cv.notify_one();
+
+		return std::get<4>(*request_it).get_future();
 	}
 };

@@ -55,7 +55,7 @@ class image_viewer {
 
 	// images vectors
 	std::vector<std::string> image_paths;
-	std::vector<glm::ivec2> image_sizes;
+	std::vector<lazy_load<glm::ivec2>> image_sizes;
 	std::vector<lazy_load<int>> image_types;
 	std::vector<bool> image_removed;
 	std::vector<bool> paging_invert;
@@ -163,7 +163,10 @@ void main()
 							GL_UNSIGNED_BYTE, white_pixel);
 	}
 
-	void on_resize(unsigned int width, unsigned int height) {
+	void on_resize(int width, int height) {
+		if (window_size == glm::ivec2(width, height))
+			return;
+
 		glm::mat4 proj = glm::ortho<float>(0.f, width, height, 0.f);
 		glProgramUniformMatrix4fv(program.id(), 0, 1, 0, &proj[0][0]);
 		glViewport(0, 0, width, height);
@@ -310,12 +313,11 @@ void main()
 	}
 
 	glm::ivec2 get_image_size(int image_index) {
-		if (image_sizes[image_index].x == -1)
-			stbi_info(image_paths[image_index].c_str(),
-					  &image_sizes[image_index].x, &image_sizes[image_index].y,
-					  nullptr);
+		glm::ivec2 default_size(1000, 1414);
+		if (get_image_type(image_index) == 3)
+			default_size.x = 2000;
 
-		return image_sizes[image_index];
+		return image_sizes[image_index].get_or(default_size);
 	}
 
 	int get_image_type(int image_index) {
@@ -370,7 +372,7 @@ void main()
 					image_paths.push_back(image_path);
 					paging_invert.push_back(false);
 
-					image_sizes.emplace_back(-1, -1);
+					image_sizes.emplace_back();
 					image_types.emplace_back();
 				} else if (image_removed[image_index])
 					image_removed[image_index] = false;
@@ -520,10 +522,15 @@ void main()
 		if (tex_it != texture_IDs.end())
 			return tex_it->second;
 
+		auto [texdata_fut, image_size_fut] =
+			loader_pool.load_texture(image_paths[image_index], size);
+
+		if (!image_sizes[image_index].has_value())
+			image_sizes[image_index] = lazy_load(std::move(image_size_fut));
+
 		return texture_IDs
 			.try_emplace(
-				tex_key,
-				loader_pool.load_texture(image_paths[image_index], size),
+				tex_key, std::move(texdata_fut),
 				[](auto &&loaded_data) {
 					GLtexture tex(GL_TEXTURE_2D);
 					glTextureParameteri(tex.id(), GL_REPEAT, GL_CLAMP_TO_EDGE);
@@ -628,8 +635,9 @@ void main()
 
 		int image_index = tag_indices[pos.tag_index];
 		glm::vec2 start_image_size = get_image_size(image_index);
-		if (!image_types[image_index].ready() &&
-			start_image_size.x > start_image_size.y * 0.8f)
+		if (start_image_size.x >
+			start_image_size.y * 0.8f) // even if was already loaded in the
+									   // background, this condition is absolute
 			image_types[image_index] = lazy_load(3);
 
 		const auto tag_page_starts = get_page_start_indices(tag_indices);
@@ -740,16 +748,16 @@ void main()
 		auto current_render_data = get_current_render_data();
 		std::vector<int> current_image_indices;
 		for (auto [pos, size_offset] : current_render_data) {
-			glBindTextureUnit(0,
-							  get_texture(tags_indices[pos.tag][pos.tag_index],
-										  {size_offset.x, size_offset.y})
-								  .id());
+			int image_index = tags_indices[pos.tag][pos.tag_index];
+
+			glBindTextureUnit(
+				0,
+				get_texture(image_index, {size_offset.x, size_offset.y}).id());
 
 			glProgramUniform2f(program.id(), 1, size_offset.z, size_offset.w);
 			glProgramUniform2f(program.id(), 2, size_offset.x, size_offset.y);
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-			current_image_indices.push_back(
-				tags_indices[pos.tag][pos.tag_index]);
+			current_image_indices.push_back(image_index);
 		}
 
 		if (!current_render_data.empty())
@@ -760,12 +768,12 @@ void main()
 					preload_texture(tags_indices[pos.tag][pos.tag_index],
 									{size_offset.x, size_offset.y});
 
-		if (current_image_indices != last_image_indices) {
-			std::cout << "current_image=";
-			for (auto index : current_image_indices)
-				std::cout << image_paths[index] << '\t';
-			std::cout << std::endl;
-		}
+		// if (current_image_indices != last_image_indices) {
+		//	std::cout << "current_image=";
+		//	for (auto index : current_image_indices)
+		//		std::cout << image_paths[index] << '\t';
+		//	std::cout << std::endl;
+		// }
 		last_image_indices = current_image_indices;
 
 		clean_textures();
@@ -800,7 +808,8 @@ void main()
 			glfwSwapBuffers(window);
 
 			dt = glfwGetTime() - last_t;
-			//std::cout << 1 / dt << std::endl;
+			if (1 / dt < 50)
+				std::cout << 1 / dt << std::endl;
 		}
 	}
 
