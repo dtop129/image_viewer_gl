@@ -399,10 +399,13 @@ void main()
 
 				tag_indices.push_back(image_index);
 			}
+			if (tag_indices.empty()) {
+				tags_indices.erase(tag);
+				return;
+			}
 
-			image_pos new_pos = curr_image_pos;
-			if (!tag_indices.empty() && curr_image_pos.tag_index == -1) {
-				new_pos.tag = tag;
+			if (curr_image_pos.tag_index == -1) {
+				curr_image_pos.tag = tag;
 				prev_curr_image_index = tag_indices.front();
 			}
 			std::sort(tag_indices.begin(), tag_indices.end(),
@@ -410,17 +413,14 @@ void main()
 						  return image_paths[idx1] < image_paths[idx2];
 					  });
 
-			if (!tag_indices.empty() && curr_image_pos.tag_index == -1) {
-				new_pos.tag_index =
+			if (curr_image_pos.tag == tag) {
+				int correct_tag_index =
 					std::find(tag_indices.begin(), tag_indices.end(),
 							  prev_curr_image_index) -
 					tag_indices.begin();
 
-				set_curr_image_pos(new_pos);
+				set_curr_image_pos({tag, correct_tag_index});
 			}
-
-			if (tag_indices.empty())
-				tags_indices.erase(tag);
 		} else if (type == "goto_tag" || type == "remove_tag") {
 			int tag = std::stoi(args[0]);
 			auto tag_it = tags_indices.find(tag);
