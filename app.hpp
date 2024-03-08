@@ -43,7 +43,6 @@ class image_viewer {
   private:
 	GLFWwindow *window;
 	glm::ivec2 window_size;
-	std::unordered_map<int, bool> keys_pressed;
 
 	GLuint null_vaoID;
 	GLtexture white_tex;
@@ -51,8 +50,8 @@ class image_viewer {
 
 	texture_load_thread loader_pool;
 	// key for following maps is texture_key(image_index, texture)
-	std::unordered_map<uint64_t, lazy_load<image_data, GLtexture>> texture_IDs;
-	std::unordered_map<uint64_t, bool> texture_used;
+	std::unordered_map<int64_t, lazy_load<image_data, GLtexture>> texture_IDs;
+	std::unordered_map<int64_t, bool> texture_used;
 
 	// images vectors
 	std::vector<std::string> image_paths;
@@ -174,11 +173,6 @@ void main()
 	}
 
 	void on_key(int key, int action) {
-		if (action == GLFW_PRESS)
-			keys_pressed[key] = true;
-		else if (action == GLFW_RELEASE)
-			keys_pressed[key] = false;
-
 		if (action == GLFW_PRESS || action == GLFW_REPEAT)
 			switch (key) {
 			case GLFW_KEY_SPACE:
@@ -188,6 +182,14 @@ void main()
 			case GLFW_KEY_BACKSPACE:
 			case GLFW_KEY_RIGHT:
 				advance_current_pos(-1);
+				break;
+			case GLFW_KEY_J:
+			case GLFW_KEY_DOWN:
+				vertical_scroll(-50.f);
+				break;
+			case GLFW_KEY_K:
+			case GLFW_KEY_UP:
+				vertical_scroll(50.f);
 				break;
 			}
 		if (action == GLFW_PRESS)
@@ -323,10 +325,10 @@ void main()
 		return image_types[image_index].get_or(0);
 	}
 
-	int texture_key(int image_index, glm::ivec2 size) const {
-		int key = size.x << 16;
-		key = (key | size.y) << 16;
-		return key | image_index;
+	int64_t texture_key(int image_index, glm::ivec2 size) const {
+		int64_t key = image_index;
+		key = (key << 16) | size.x;
+		return (key << 16) | size.y;
 	}
 
 	void execute_cmd(std::string_view cmd) {
@@ -445,25 +447,27 @@ void main()
 	}
 
 	void change_mode(view_mode new_mode) {
-		if (new_mode != curr_view_mode) {
-			std::string new_mode_str = [new_mode] {
-				switch (new_mode) {
-				case view_mode::manga:
-					return "manga";
-				case view_mode::single:
-					return "single";
-				case view_mode::vertical:
-					return "vertical";
-				}
-			}();
+		if (new_mode == curr_view_mode)
+			return;
 
-			std::cout << "current_mode=" << new_mode_str << std::endl;
-		}
-
+		std::string new_mode_str = [new_mode] {
+			switch (new_mode) {
+			case view_mode::manga:
+				return "manga";
+			case view_mode::single:
+				return "single";
+			case view_mode::vertical:
+				return "vertical";
+			}
+		}();
+		std::cout << "current_mode=" << new_mode_str << std::endl;
 		curr_view_mode = new_mode;
 	}
 
 	void fix_vertical_limits() {
+		if (curr_view_mode != view_mode::vertical)
+			return;
+
 		auto new_render_data = get_current_render_data();
 		if (new_render_data.empty())
 			return;
@@ -500,13 +504,6 @@ void main()
 		}
 	}
 
-	void handle_keys(float dt) {
-		if (keys_pressed[GLFW_KEY_J] || keys_pressed[GLFW_KEY_DOWN])
-			vertical_scroll(-500 * dt);
-		else if (keys_pressed[GLFW_KEY_K] || keys_pressed[GLFW_KEY_UP])
-			vertical_scroll(500 * dt);
-	}
-
 	void handle_stdin() {
 		while (std::cin.rdbuf()->in_avail()) {
 			std::string cmd;
@@ -516,7 +513,7 @@ void main()
 	}
 
 	auto &preload_texture(int image_index, glm::ivec2 size) {
-		int tex_key = texture_key(image_index, size);
+		int64_t tex_key = texture_key(image_index, size);
 		texture_used[tex_key] = true;
 
 		auto tex_it = texture_IDs.find(tex_key);
@@ -797,13 +794,13 @@ void main()
 			double last_t = glfwGetTime();
 			glfwPollEvents();
 			handle_stdin();
-			handle_keys(dt);
 
 			glClear(GL_COLOR_BUFFER_BIT);
 			render();
 			glfwSwapBuffers(window);
 
 			dt = glfwGetTime() - last_t;
+			//std::cout << 1 / dt << std::endl;
 		}
 	}
 
