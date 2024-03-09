@@ -702,7 +702,7 @@ void main()
 		float scale = std::min(scale_x, scale_y);
 
 		glm::vec2 scaled_rect_size = rect_size * scale;
-		glm::vec2 offset = (glm::vec2(window_size) - scaled_rect_size) * 0.5f;
+		glm::vec2 offset = glm::round((glm::vec2(window_size) - scaled_rect_size) * 0.5f);
 
 		std::vector<std::pair<image_pos, glm::vec4>> sizes_offsets;
 		float running_offset = 0;
@@ -731,7 +731,7 @@ void main()
 
 		if (curr_view_mode == view_mode::vertical) {
 			image_pos pos = curr_image_pos;
-			float offset_y = vertical_offset;
+			float offset_y = glm::round(vertical_offset);
 
 			while (offset_y > 0) {
 				image_pos prev_pos = try_advance_pos(pos, -1);
@@ -802,7 +802,7 @@ void main()
 				  try_advance_pos(current_render_data.back().first, 1)})
 				for (auto [pos, size_offset] : center_page(pos))
 					preload_texture(tags_indices[pos.tag][pos.tag_index],
-									{size_offset.x, size_offset.y});
+									{size_offset.x, size_offset.y}).get_or(white_tex);;
 		preload_close_image_types();
 
 		if (current_image_indices != last_image_indices) {
