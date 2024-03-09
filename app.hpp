@@ -817,7 +817,7 @@ void main()
 	}
 
   public:
-	image_viewer() : loader_pool(4) {
+	image_viewer() : loader_pool(std::thread::hardware_concurrency() - 1) {
 		init_window();
 		init_GLresources();
 	}
