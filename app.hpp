@@ -73,8 +73,9 @@ class image_viewer {
 	std::vector<int> last_image_indices;
 
 	enum class view_mode { manga, single, vertical } curr_view_mode;
-
 	float vertical_offset = 0.f;
+
+	int pressed_key;
 
 	void init_window() {
 		if (!glfwInit())
@@ -176,6 +177,11 @@ void main()
 	}
 
 	void on_key(int key, int action) {
+		if (action == GLFW_PRESS)
+			pressed_key = key;
+		if (action == GLFW_RELEASE && key == pressed_key)
+			pressed_key = -1;
+
 		if (action == GLFW_PRESS || action == GLFW_REPEAT)
 			switch (key) {
 			case GLFW_KEY_SPACE:
@@ -185,14 +191,6 @@ void main()
 			case GLFW_KEY_BACKSPACE:
 			case GLFW_KEY_RIGHT:
 				advance_current_pos(-1);
-				break;
-			case GLFW_KEY_J:
-			case GLFW_KEY_DOWN:
-				vertical_scroll(-50.f);
-				break;
-			case GLFW_KEY_K:
-			case GLFW_KEY_UP:
-				vertical_scroll(50.f);
 				break;
 			}
 		if (action == GLFW_PRESS)
@@ -249,6 +247,26 @@ void main()
 				}
 				break;
 			}
+	}
+
+	void handle_keys(float dt)
+	{
+		float offset = 1000 * dt;
+		switch (pressed_key)
+		{
+			case GLFW_KEY_J:
+			case GLFW_KEY_DOWN:
+				vertical_scroll(-offset);
+				fix_vertical_limits();
+				break;
+			case GLFW_KEY_K:
+			case GLFW_KEY_UP:
+				vertical_scroll(offset);
+				fix_vertical_limits();
+				break;
+			default:
+				return;
+		}
 	}
 
 	bool set_curr_image_pos(image_pos new_pos) {
@@ -799,7 +817,7 @@ void main()
 	}
 
   public:
-	image_viewer(const std::string &config_path) : loader_pool(4) {
+	image_viewer() : loader_pool(4) {
 		init_window();
 		init_GLresources();
 	}
@@ -816,15 +834,20 @@ void main()
 
 		std::cout << "current_mode=manga" << std::endl;
 
+		double dt = 0;
 		int i = 0;
 		while (!glfwWindowShouldClose(window)) {
+			double last_t = glfwGetTime();
 			glfwPollEvents();
 			handle_stdin();
+			handle_keys(dt);
 
 			glClear(GL_COLOR_BUFFER_BIT);
 			if (i++ > 5)
 				render();
 			glfwSwapBuffers(window);
+
+			dt = glfwGetTime() - last_t;
 		}
 	}
 
