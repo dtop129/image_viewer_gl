@@ -166,8 +166,7 @@ class texture_load_thread {
 
 			bool type_set = false;
 			stbi_info_from_file(f, &size.x, &size.y, nullptr);
-			if (size.x > size.y * 0.8)
-			{
+			if (size.x > size.y * 0.8) {
 				type_set = true;
 				type_pr.set_value(3);
 				if (req_size.x == 0) {
@@ -180,8 +179,7 @@ class texture_load_thread {
 			uint8_t *pixels =
 				stbi_load_from_file(f, &size.x, &size.y, nullptr, 4);
 
-			if (!type_set)
-			{
+			if (!type_set) {
 				type_pr.set_value(compute_image_type(pixels, size));
 				if (req_size.x == 0) {
 					stbi_image_free(pixels);
