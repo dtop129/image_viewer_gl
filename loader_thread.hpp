@@ -84,9 +84,9 @@ template <typename FutureOutput, typename FuncOutput = void> class lazy_load {
 	bool unset = false;
 
   public:
-	explicit lazy_load(FutureType &&fut) : future(std::move(fut)) {}
+	lazy_load(FutureType &&fut) : future(std::move(fut)) {}
 
-	explicit lazy_load(FutureType &&fut, TransType transfunc)
+	lazy_load(FutureType &&fut, TransType transfunc)
 		: future(std::move(fut)), transform(transfunc) {}
 
 	lazy_load() : unset(true) {}
@@ -159,41 +159,31 @@ class texture_load_thread {
 			lk.unlock();
 
 			glm::ivec2 size;
-			FILE *f = stbi__fopen(req_path.c_str(), "rb");
+			if (req_size.x == 0) {
+				FILE *f = stbi__fopen(req_path.c_str(), "rb");
+				stbi_info_from_file(f, &size.x, &size.y, nullptr);
+				size_pr.set_value(size);
 
-			bool type_set = false;
-			stbi_info_from_file(f, &size.x, &size.y, nullptr);
-			if (size.x > size.y * 0.8) {
-				type_set = true;
-				type_pr.set_value(3);
-				if (req_size.x == 0) {
-					fclose(f);
-					continue;
-				}
-			}
-
-			size_pr.set_value(size);
-			uint8_t *pixels =
-				stbi_load_from_file(f, &size.x, &size.y, nullptr, 4);
-
-			if (!type_set) {
-				type_pr.set_value(compute_image_type(pixels, size));
-				if (req_size.x == 0) {
+				if (size.x > size.y * 0.8)
+					type_pr.set_value(3);
+				else {
+					uint8_t *pixels =
+						stbi_load_from_file(f, &size.x, &size.y, nullptr, 4);
+					type_pr.set_value(compute_image_type(pixels, size));
 					stbi_image_free(pixels);
-					fclose(f);
-					continue;
 				}
+				fclose(f);
+			} else {
+				uint8_t *pixels =
+					stbi_load(req_path.c_str(), &size.x, &size.y, nullptr, 4);
+				image_data data;
+				data.size = req_size;
+				data.pixels.resize(req_size.x * req_size.y * 4);
+				resizer.resizeImage(pixels, size.x, size.y, data.pixels.data(),
+									req_size.x, req_size.y, 4);
+				pixel_pr.set_value(data);
+				stbi_image_free(pixels);
 			}
-
-			image_data data;
-			data.size = req_size;
-			data.pixels.resize(req_size.x * req_size.y * 4);
-			resizer.resizeImage(pixels, size.x, size.y, data.pixels.data(),
-								req_size.x, req_size.y, 4);
-
-			pixel_pr.set_value(data);
-			stbi_image_free(pixels);
-			fclose(f);
 		}
 	}
 
@@ -216,18 +206,17 @@ class texture_load_thread {
 			std::promise<int>());
 		cv.notify_one();
 
-		return std::tuple{std::get<2>(request).get_future(),
-						  std::get<3>(request).get_future(),
-						  std::get<4>(request).get_future()};
+		return std::get<2>(request).get_future();
 	}
 
-	auto get_image_type(const std::string &path) {
+	auto get_size_type(const std::string &path) {
 		std::scoped_lock lk(mutex);
 		auto &request = requests.emplace_front(
 			path, glm::ivec2(0, 0), std::promise<image_data>(),
 			std::promise<glm::ivec2>(), std::promise<int>());
 		cv.notify_one();
 
-		return std::get<4>(request).get_future();
+		return std::pair{std::get<3>(request).get_future(),
+						 std::get<4>(request).get_future()};
 	}
 };
