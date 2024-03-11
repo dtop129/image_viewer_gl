@@ -89,9 +89,6 @@ template <typename FutureOutput, typename FuncOutput = void> class lazy_load {
 	explicit lazy_load(FutureType &&fut, TransType transfunc)
 		: future(std::move(fut)), transform(transfunc) {}
 
-	template <typename T>
-	explicit lazy_load(T &&val) : result(std::forward<T>(val)) {}
-
 	lazy_load() : unset(true) {}
 
 	const ResultType &get() {

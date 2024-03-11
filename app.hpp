@@ -51,7 +51,6 @@ class image_viewer {
 	texture_load_thread loader_pool;
 	// key for following maps is texture_key(image_index, texture)
 	std::unordered_map<int64_t, lazy_load<image_data, GLtexture>> textures;
-	std::unordered_map<int64_t, bool> texture_used;
 
 	// images vectors
 	std::vector<std::string> image_paths;
@@ -423,7 +422,7 @@ void main()
 			}
 
 			if (curr_image_pos.tag_index == -1) {
-				curr_image_pos.tag = tag;
+				set_curr_image_pos({tag, 0});
 				prev_curr_image_index = tag_indices.front();
 			}
 			std::sort(tag_indices.begin(), tag_indices.end(),
@@ -456,7 +455,7 @@ void main()
 				auto new_tag_it = std::next(tag_it);
 				if (new_tag_it == tags_indices.end()) {
 					if (tag_it == tags_indices.begin())
-						set_curr_image_pos({-1, -1});
+						curr_image_pos = {-1, -1};
 					else
 						new_tag_it = std::prev(tag_it);
 				}
@@ -556,7 +555,6 @@ void main()
 
 	auto &preload_texture(int image_index, glm::ivec2 size) {
 		int64_t tex_key = texture_key(image_index, size);
-		texture_used[tex_key] = true;
 
 		auto tex_it = textures.find(tex_key);
 		if (tex_it != textures.end())
@@ -600,10 +598,8 @@ void main()
 				textures.begin(), textures.end(), [image_index](auto &tex) {
 					return tex.first >> 32 == image_index && tex.second.ready();
 				});
-			if (loaded_it != textures.end()) {
-				texture_used[loaded_it->first] = true;
+			if (loaded_it != textures.end())
 				return loaded_it->second.get();
-			}
 		}
 		return tex;
 	}
@@ -782,7 +778,7 @@ void main()
 	void render() {
 		auto current_render_data = get_current_render_data();
 
-		texture_used.clear();
+		std::unordered_map<glm::int64, bool> texture_used;
 		for (const auto& [key, tex] : textures)
 			texture_used[key] = false;
 		for (auto [pos, size_offset] : current_render_data)
@@ -792,6 +788,7 @@ void main()
 				textures.erase(key);
 
 		std::vector<int> current_image_indices;
+		//double t1 = glfwGetTime();
 		for (auto [pos, size_offset] : current_render_data) {
 			int image_index = tags_indices[pos.tag][pos.tag_index];
 			const GLtexture &tex =
@@ -805,6 +802,9 @@ void main()
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 			current_image_indices.push_back(image_index);
 		}
+		//double t2 = glfwGetTime();
+		//if (t2 - t1 > 1e-3)
+		//	std::cout << t2 - t1 << std::endl;
 
 		preload_close_image_types();
 
