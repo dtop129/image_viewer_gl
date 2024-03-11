@@ -249,28 +249,26 @@ void main()
 			}
 	}
 
-	void handle_keys(float dt)
-	{
+	void handle_keys(float dt) {
 		float offset = 1000 * dt;
-		switch (pressed_key)
-		{
-			case GLFW_KEY_J:
-			case GLFW_KEY_DOWN:
-				vertical_scroll(-offset);
-				fix_vertical_limits();
-				break;
-			case GLFW_KEY_K:
-			case GLFW_KEY_UP:
-				vertical_scroll(offset);
-				fix_vertical_limits();
-				break;
-			default:
-				return;
+		switch (pressed_key) {
+		case GLFW_KEY_J:
+		case GLFW_KEY_DOWN:
+			vertical_scroll(-offset);
+			fix_vertical_limits();
+			break;
+		case GLFW_KEY_K:
+		case GLFW_KEY_UP:
+			vertical_scroll(offset);
+			fix_vertical_limits();
+			break;
+		default:
+			return;
 		}
 	}
 
 	bool set_curr_image_pos(image_pos new_pos) {
-		if (new_pos == curr_image_pos)
+		if (new_pos == curr_image_pos || new_pos.tag_index == -1)
 			return false;
 
 		curr_image_pos = new_pos;
@@ -330,7 +328,6 @@ void main()
 		if (tag_it == tags_indices.end())
 			return {-1, -1};
 
-		image_pos start_pos = pos;
 		auto page_start_indices = get_page_start_indices(tag_it->second);
 		int initial_page_start = page_start_indices[pos.tag_index];
 		int page_start = initial_page_start;
@@ -339,18 +336,21 @@ void main()
 			if (pos.tag_index == tag_it->second.size() || pos.tag_index == -1) {
 				if ((dir > 0 && std::next(tag_it) == tags_indices.end()) ||
 					(dir < 0 && tag_it == tags_indices.begin()))
-					return start_pos;
+					return {-1, -1};
 
 				std::advance(tag_it, dir);
 				pos = {tag_it->first,
 					   int(dir > 0 ? 0 : tag_it->second.size() - 1)};
 				page_start_indices = get_page_start_indices(tag_it->second);
+				page_start = page_start_indices[pos.tag_index];
 				break;
 			}
 			page_start = page_start_indices[pos.tag_index];
 		}
+		if (initial_page_start == page_start)
+			return {-1, -1};
 
-		return {pos.tag, page_start_indices[pos.tag_index]};
+		return {pos.tag, page_start};
 	}
 
 	glm::ivec2 get_image_size(int image_index) {
@@ -669,6 +669,8 @@ void main()
 	}
 
 	std::vector<std::pair<image_pos, glm::vec4>> center_page(image_pos pos) {
+		if (pos.tag_index == -1)
+			return {};
 		if (curr_view_mode == view_mode::vertical)
 			return {{pos, vertical_slice_center(
 							  tags_indices[pos.tag][pos.tag_index])}};
@@ -702,7 +704,8 @@ void main()
 		float scale = std::min(scale_x, scale_y);
 
 		glm::vec2 scaled_rect_size = rect_size * scale;
-		glm::vec2 offset = glm::round((glm::vec2(window_size) - scaled_rect_size) * 0.5f);
+		glm::vec2 offset =
+			glm::round((glm::vec2(window_size) - scaled_rect_size) * 0.5f);
 
 		std::vector<std::pair<image_pos, glm::vec4>> sizes_offsets;
 		float running_offset = 0;
@@ -735,7 +738,7 @@ void main()
 
 			while (offset_y > 0) {
 				image_pos prev_pos = try_advance_pos(pos, -1);
-				if (prev_pos != pos) {
+				if (prev_pos.tag_index != -1) {
 					pos = prev_pos;
 					glm::vec4 scaled_size_offset = vertical_slice_center(
 						tags_indices[pos.tag][pos.tag_index]);
@@ -754,55 +757,55 @@ void main()
 
 				offset_y += scaled_size_offset.y;
 				image_pos new_pos = try_advance_pos(pos, 1);
-				if (new_pos == pos)
-					break;
-				else
+				if (new_pos.tag_index != -1)
 					pos = new_pos;
+				else
+					break;
 			}
 		} else if (curr_view_mode == view_mode::manga ||
 				   curr_view_mode == view_mode::single)
 			sizes_offsets = center_page(curr_image_pos);
 
+		std::array<std::pair<image_pos, int>, 2> preload_offsets = {
+			std::pair{sizes_offsets.front().first, -1},
+			std::pair{sizes_offsets.back().first, 1}};
+
+		for (auto [start, offset] : preload_offsets)
+			for (auto [pos, size_offset] :
+				 center_page(try_advance_pos(start, offset)))
+				sizes_offsets.emplace_back(
+					pos, glm::vec4(size_offset.x, size_offset.y, 1000000, 1000000));
+
 		return sizes_offsets;
-	}
-
-	void clean_textures() {
-		for (auto it = texture_used.begin(); it != texture_used.end();) {
-			auto &[tex_key, used] = *it;
-			if (!used) {
-				auto texID_it = textures.find(tex_key);
-				if (texID_it != textures.end())
-					textures.erase(texID_it);
-
-				it = texture_used.erase(it);
-			} else {
-				used = false;
-				++it;
-			}
-		}
 	}
 
 	void render() {
 		auto current_render_data = get_current_render_data();
+
+		texture_used.clear();
+		for (const auto& [key, tex] : textures)
+			texture_used[key] = false;
+		for (auto [pos, size_offset] : current_render_data)
+			texture_used[texture_key(tags_indices[pos.tag][pos.tag_index], {size_offset.x, size_offset.y})] = true;
+		for (auto [key, used] : texture_used)
+			if (!used)
+				textures.erase(key);
+
 		std::vector<int> current_image_indices;
 		for (auto [pos, size_offset] : current_render_data) {
 			int image_index = tags_indices[pos.tag][pos.tag_index];
-			glBindTextureUnit(
-				0,
-				get_texture(image_index, {size_offset.x, size_offset.y}).id());
+			const GLtexture &tex =
+				get_texture(image_index, {size_offset.x, size_offset.y});
+			if (size_offset.z == 1000000)
+				continue;
+
+			glBindTextureUnit(0, tex.id());
 			glProgramUniform2f(program.id(), 1, size_offset.z, size_offset.w);
 			glProgramUniform2f(program.id(), 2, size_offset.x, size_offset.y);
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 			current_image_indices.push_back(image_index);
 		}
 
-		if (!current_render_data.empty())
-			for (auto pos :
-				 {try_advance_pos(current_render_data.front().first, -1),
-				  try_advance_pos(current_render_data.back().first, 1)})
-				for (auto [pos, size_offset] : center_page(pos))
-					preload_texture(tags_indices[pos.tag][pos.tag_index],
-									{size_offset.x, size_offset.y}).get_or(white_tex);;
 		preload_close_image_types();
 
 		if (current_image_indices != last_image_indices) {
@@ -812,8 +815,6 @@ void main()
 			std::cout << std::endl;
 		}
 		last_image_indices = current_image_indices;
-
-		clean_textures();
 	}
 
   public:
