@@ -42,6 +42,11 @@ public:
 		glDeleteShader(fragmentID);
 	}
 
+	void destroy()
+	{
+		glDeleteProgram(programID);
+	}
+
 	void use() const
 	{
 		glUseProgram(programID);
@@ -50,10 +55,5 @@ public:
 	GLuint id() const
 	{
 		return programID;
-	}
-
-	~shader_program()
-	{
-		glDeleteProgram(programID);
 	}
 };

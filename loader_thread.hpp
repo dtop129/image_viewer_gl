@@ -20,6 +20,8 @@
 #include <GL/gl3w.h>
 #include <GLFW/glfw3.h>
 
+#include "shader.hpp"
+
 int compute_image_type(uint8_t *pixels, glm::ivec2 size) {
 	int w = size.x, h = size.y;
 
@@ -106,6 +108,8 @@ class texture_load_thread {
   private:
 	std::vector<std::jthread> worker_threads;
 	GLFWwindow *load_window;
+	shader_program program;
+	GLuint nullVAO;
 
 	using req_type = std::tuple<std::string, glm::ivec2, std::promise<GLuint>,
 								std::promise<glm::ivec2>, std::promise<int>>;
@@ -164,6 +168,8 @@ class texture_load_thread {
 				glTextureSubImage2D(tex, 0, 0, 0, req_size.x, req_size.y,
 									GL_RGBA, GL_UNSIGNED_BYTE,
 									resized_pixels.data());
+				glBindTextureUnit(0, tex);
+				glDrawArrays(GL_TRIANGLES, 0, 3);
 				glFinish();
 				texture_pr.set_value(tex);
 				glfwMakeContextCurrent(nullptr);
@@ -177,9 +183,42 @@ class texture_load_thread {
 		this->load_window = load_window;
 		for (int i = 0; i < n_workers; ++i)
 			worker_threads.emplace_back([this] { loader(); });
+
+		const std::string vert_shader = R"(
+#version 460 core
+out vec2 fs_texcoords;
+void main()
+{
+	const vec2 pos_arr[3] = {{-1, -1}, {3, -1}, {1, -3}};
+	gl_Position = vec4(pos_arr[gl_VertexID], 0, 1);
+	fs_texcoords = 0.5 * gl_Position.xy + vec2(0.5);
+})";
+
+		const std::string frag_shader = R"(
+#version 460 core
+in vec2 fs_texcoords;
+out vec4 frag_color;
+uniform sampler2D tex;
+void main()
+{
+    frag_color = texture(tex, fs_texcoords);
+})";
+		GLFWwindow *prev_context = glfwGetCurrentContext();
+		glfwMakeContextCurrent(load_window);
+		glCreateVertexArrays(1, &nullVAO);
+		glBindVertexArray(nullVAO);
+		program.init(vert_shader, frag_shader);
+		program.use();
+		glfwMakeContextCurrent(prev_context);
 	}
 
-	~texture_load_thread() {
+	void destroy() {
+		GLFWwindow *prev_context = glfwGetCurrentContext();
+		glfwMakeContextCurrent(load_window);
+		glDeleteVertexArrays(1, &nullVAO);
+		program.destroy();
+		glfwMakeContextCurrent(prev_context);
+
 		std::scoped_lock lk(mutex);
 		stop = true;
 		cv.notify_all();

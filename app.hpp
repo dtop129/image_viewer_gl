@@ -15,7 +15,6 @@
 #include <unordered_map>
 
 #include "loader_thread.hpp"
-#include "shader.hpp"
 
 class image_viewer {
   private:
@@ -65,7 +64,6 @@ class image_viewer {
 
 		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 		load_window = glfwCreateWindow(1, 1, "load window", nullptr, nullptr);
-		loader_pool.init(load_window, std::thread::hardware_concurrency() - 1);
 
 		glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
 		window =
@@ -146,6 +144,8 @@ void main()
 		glTextureStorage2D(white_tex, 1, GL_RGBA8, 1, 1);
 		glTextureSubImage2D(white_tex, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
 							white_pixel);
+
+		loader_pool.init(load_window, std::thread::hardware_concurrency() - 1);
 	}
 
 	void on_resize(int width, int height) {
@@ -744,7 +744,6 @@ void main()
 		auto current_render_data = get_current_render_data();
 
 		std::vector<int> current_image_indices;
-		//double t1 = glfwGetTime();
 		for (auto [pos, size_offset] : current_render_data) {
 			int image_index = tags_indices[pos.tag][pos.tag_index];
 			GLuint tex =
@@ -758,9 +757,6 @@ void main()
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 			current_image_indices.push_back(image_index);
 		}
-		//double t2 = glfwGetTime();
-		//if (t2 - t1 > 1e-3)
-		//	std::cout << t2 - t1 << std::endl;
 
 		for (auto &[key, used] : texture_used)
 			if (!used)
@@ -822,6 +818,8 @@ void main()
 		for (auto&[key, tex] : textures)
 			glDeleteTextures(1, &tex.get());
 		glDeleteVertexArrays(1, &null_vaoID);
+		program.destroy();
+		loader_pool.destroy();
 
 		glfwDestroyWindow(load_window);
 		glfwDestroyWindow(window);
