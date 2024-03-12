@@ -17,40 +17,18 @@
 #include "loader_thread.hpp"
 #include "shader.hpp"
 
-class GLtexture {
-  private:
-	GLuint ID = 0;
-
-  public:
-	GLtexture(GLenum type) { create(type); }
-	GLtexture() = default;
-
-	GLtexture(GLtexture &&other) { *this = std::move(other); }
-	GLtexture &operator=(GLtexture &&other) {
-		ID = other.ID;
-		other.ID = 0;
-		return *this;
-	}
-
-	void create(GLenum type) { glCreateTextures(type, 1, &ID); }
-
-	~GLtexture() { glDeleteTextures(1, &ID); }
-
-	GLuint id() const { return ID; }
-};
-
 class image_viewer {
   private:
-	GLFWwindow *window;
+	GLFWwindow *window, *load_window;
 	glm::ivec2 window_size;
 
 	GLuint null_vaoID;
-	GLtexture white_tex;
+	GLuint white_tex;
 	shader_program program;
 
 	texture_load_thread loader_pool;
 	// key for following maps is texture_key(image_index, texture)
-	std::unordered_map<int64_t, lazy_load<image_data, GLtexture>> textures;
+	std::unordered_map<int64_t, lazy_load<GLuint>> textures;
 	std::unordered_map<glm::int64, bool> texture_used;
 
 	// images vectors
@@ -85,7 +63,13 @@ class image_viewer {
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-		window = glfwCreateWindow(800, 600, "image viewer", NULL, NULL);
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+		load_window = glfwCreateWindow(1, 1, "load window", nullptr, nullptr);
+		loader_pool.init(load_window, std::thread::hardware_concurrency() - 1);
+
+		glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
+		window =
+			glfwCreateWindow(800, 600, "image viewer", nullptr, load_window);
 		if (!window) {
 			fprintf(stderr, "ERROR: could not open window with GLFW3\n");
 			glfwTerminate();
@@ -158,10 +142,10 @@ void main()
 		glViewport(0, 0, 800, 600);
 
 		uint8_t white_pixel[] = {255, 255, 255, 255};
-		white_tex.create(GL_TEXTURE_2D);
-		glTextureStorage2D(white_tex.id(), 1, GL_RGBA8, 1, 1);
-		glTextureSubImage2D(white_tex.id(), 0, 0, 0, 1, 1, GL_RGBA,
-							GL_UNSIGNED_BYTE, white_pixel);
+		glCreateTextures(GL_TEXTURE_2D, 1, &white_tex);
+		glTextureStorage2D(white_tex, 1, GL_RGBA8, 1, 1);
+		glTextureSubImage2D(white_tex, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+							white_pixel);
 	}
 
 	void on_resize(int width, int height) {
@@ -554,7 +538,7 @@ void main()
 		}
 	}
 
-	const GLtexture &get_texture(int image_index, glm::ivec2 size) {
+	GLuint get_texture(int image_index, glm::ivec2 size) {
 		int64_t tex_key = texture_key(image_index, size);
 		texture_used[tex_key] = true;
 
@@ -566,28 +550,11 @@ void main()
 			return white_tex;
 
 		if (!textures.contains(tex_key))
-			textures.try_emplace(
-				tex_key,
-				loader_pool.load_texture(image_paths[image_index], size),
-				[](auto &&loaded_data) {
-					GLtexture tex(GL_TEXTURE_2D);
-					glTextureParameteri(tex.id(), GL_REPEAT, GL_CLAMP_TO_EDGE);
-					glTextureParameteri(tex.id(), GL_TEXTURE_MIN_FILTER,
-										GL_NEAREST);
-					glTextureParameteri(tex.id(), GL_TEXTURE_MAG_FILTER,
-										GL_NEAREST);
+			textures.try_emplace(tex_key, loader_pool.load_texture(
+											  image_paths[image_index], size));
 
-					glTextureStorage2D(tex.id(), 1, GL_RGBA8,
-									   loaded_data.size.x, loaded_data.size.y);
-					glTextureSubImage2D(tex.id(), 0, 0, 0, loaded_data.size.x,
-										loaded_data.size.y, GL_RGBA,
-										GL_UNSIGNED_BYTE,
-										loaded_data.pixels.data());
-					return tex;
-				});
-
-		const GLtexture &tex = textures[tex_key].get_or(white_tex);
-		if (tex.id() == white_tex.id()) {
+		GLuint tex = textures[tex_key].get_or(white_tex);
+		if (tex == white_tex) {
 			auto loaded_it = std::find_if(
 				textures.begin(), textures.end(), [image_index](auto &tex) {
 					return tex.first >> 32 == image_index && tex.second.ready();
@@ -773,32 +740,38 @@ void main()
 	}
 
 	void render() {
+		preload_close_image_types();
 		auto current_render_data = get_current_render_data();
 
 		std::vector<int> current_image_indices;
+		//double t1 = glfwGetTime();
 		for (auto [pos, size_offset] : current_render_data) {
 			int image_index = tags_indices[pos.tag][pos.tag_index];
-			const GLtexture &tex =
+			GLuint tex =
 				get_texture(image_index, {size_offset.x, size_offset.y});
-			if (size_offset.z == 1000000)
+			if (size_offset.z == 1000000) // preload
 				continue;
 
-			glBindTextureUnit(0, tex.id());
+			glBindTextureUnit(0, tex);
 			glProgramUniform2f(program.id(), 1, size_offset.z, size_offset.w);
 			glProgramUniform2f(program.id(), 2, size_offset.x, size_offset.y);
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 			current_image_indices.push_back(image_index);
 		}
+		//double t2 = glfwGetTime();
+		//if (t2 - t1 > 1e-3)
+		//	std::cout << t2 - t1 << std::endl;
 
 		for (auto &[key, used] : texture_used)
 			if (!used)
+			{
+				glDeleteTextures(1, &textures[key].get_or(0));
 				textures.erase(key);
+			}
 		std::erase_if(texture_used,
 					  [](auto &pair) { return pair.second == false; });
 		for (auto &[key, used] : texture_used)
 			used = false;
-
-		preload_close_image_types();
 
 		if (current_image_indices != last_image_indices) {
 			std::cout << "current_image=";
@@ -810,7 +783,7 @@ void main()
 	}
 
   public:
-	image_viewer() : loader_pool(std::thread::hardware_concurrency() - 1) {
+	image_viewer() {
 		init_window();
 		init_GLresources();
 	}
@@ -845,8 +818,12 @@ void main()
 	}
 
 	~image_viewer() {
+		glDeleteTextures(1, &white_tex);
+		for (auto&[key, tex] : textures)
+			glDeleteTextures(1, &tex.get());
 		glDeleteVertexArrays(1, &null_vaoID);
 
+		glfwDestroyWindow(load_window);
 		glfwDestroyWindow(window);
 		glfwTerminate();
 	}

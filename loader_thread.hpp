@@ -16,10 +16,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-struct image_data {
-	std::vector<uint8_t> pixels;
-	glm::ivec2 size;
-};
+#define GLFW_INCLUDE_NONE
+#include <GL/gl3w.h>
+#include <GLFW/glfw3.h>
 
 int compute_image_type(uint8_t *pixels, glm::ivec2 size) {
 	int w = size.x, h = size.y;
@@ -70,51 +69,31 @@ int compute_image_type(uint8_t *pixels, glm::ivec2 size) {
 	return page_type;
 }
 
-template <typename FutureOutput, typename FuncOutput = void> class lazy_load {
+template <typename T> class lazy_load {
   private:
-	using TransType = FuncOutput (*)(FutureOutput &&);
-	using FutureType = std::future<FutureOutput>;
-	using ResultType = std::conditional_t<std::is_same_v<FuncOutput, void>,
-										  FutureOutput, FuncOutput>;
-
-	FutureType future;
-	ResultType result;
-	TransType transform;
+	std::future<T> future;
+	T result;
 
 	bool unset = false;
 
   public:
-	lazy_load(FutureType &&fut) : future(std::move(fut)) {}
-
-	lazy_load(FutureType &&fut, TransType transfunc)
-		: future(std::move(fut)), transform(transfunc) {}
-
+	lazy_load(std::future<T> &&fut) : future(std::move(fut)) {}
 	lazy_load() : unset(true) {}
 
-	const ResultType &get() {
-		if (future.valid()) {
-			if constexpr (std::is_same_v<FuncOutput, void>)
-				result = future.get();
-			else
-				result = transform(future.get());
-		}
+	const T &get() {
+		if (future.valid())
+			result = future.get();
 		return result;
 	}
 
-	const ResultType &get_or(const ResultType &alt) {
+	const T &get_or(const T &alt) {
 		if (!ready())
 			return alt;
 		return get();
 	}
 
-	ResultType get_or(ResultType &&alt) {
-		if (!ready())
-			return std::move(alt);
-		return get();
-	}
-
 	bool ready() const {
-		return has_value() &&
+		return !unset &&
 			   (!future.valid() ||
 				(future.valid() && future.wait_for(std::chrono::seconds(0)) ==
 									   std::future_status::ready));
@@ -123,22 +102,17 @@ template <typename FutureOutput, typename FuncOutput = void> class lazy_load {
 	bool has_value() const { return !unset; }
 };
 
-template <typename T> lazy_load(T &&val) -> lazy_load<std::remove_cvref_t<T>>;
-
-template <typename T, typename F>
-lazy_load(std::future<T> &&fut, F transfunc)
-	-> lazy_load<T, std::invoke_result_t<F, T>>;
-
 class texture_load_thread {
   private:
 	std::vector<std::jthread> worker_threads;
+	GLFWwindow *load_window;
 
-	using req_type =
-		std::tuple<std::string, glm::ivec2, std::promise<image_data>,
-				   std::promise<glm::ivec2>, std::promise<int>>;
+	using req_type = std::tuple<std::string, glm::ivec2, std::promise<GLuint>,
+								std::promise<glm::ivec2>, std::promise<int>>;
 
 	std::deque<req_type> requests;
 
+	std::mutex context_mutex;
 	std::mutex mutex;
 	std::condition_variable cv;
 	bool stop = false;
@@ -153,7 +127,7 @@ class texture_load_thread {
 			if (stop)
 				return;
 
-			auto [req_path, req_size, pixel_pr, size_pr, type_pr] =
+			auto [req_path, req_size, texture_pr, size_pr, type_pr] =
 				std::move(requests.back());
 			requests.pop_back();
 			lk.unlock();
@@ -176,19 +150,31 @@ class texture_load_thread {
 			} else {
 				uint8_t *pixels =
 					stbi_load(req_path.c_str(), &size.x, &size.y, nullptr, 4);
-				image_data data;
-				data.size = req_size;
-				data.pixels.resize(req_size.x * req_size.y * 4);
-				resizer.resizeImage(pixels, size.x, size.y, data.pixels.data(),
-									req_size.x, req_size.y, 4);
-				pixel_pr.set_value(data);
+				std::vector<uint8_t> resized_pixels(req_size.x * req_size.y *
+													4);
+				resizer.resizeImage(pixels, size.x, size.y,
+									resized_pixels.data(), req_size.x,
+									req_size.y, 4);
+
+				std::scoped_lock lk(context_mutex);
+				glfwMakeContextCurrent(load_window);
+				GLuint tex;
+				glCreateTextures(GL_TEXTURE_2D, 1, &tex);
+				glTextureStorage2D(tex, 1, GL_RGBA8, req_size.x, req_size.y);
+				glTextureSubImage2D(tex, 0, 0, 0, req_size.x, req_size.y,
+									GL_RGBA, GL_UNSIGNED_BYTE,
+									resized_pixels.data());
+				glFinish();
+				texture_pr.set_value(tex);
+				glfwMakeContextCurrent(nullptr);
 				stbi_image_free(pixels);
 			}
 		}
 	}
 
   public:
-	explicit texture_load_thread(unsigned int n_workers) {
+	void init(GLFWwindow *load_window, unsigned int n_workers) {
+		this->load_window = load_window;
 		for (int i = 0; i < n_workers; ++i)
 			worker_threads.emplace_back([this] { loader(); });
 	}
@@ -202,7 +188,7 @@ class texture_load_thread {
 	auto load_texture(const std::string &path, glm::ivec2 size) {
 		std::scoped_lock lk(mutex);
 		auto &request = requests.emplace_back(
-			path, size, std::promise<image_data>(), std::promise<glm::ivec2>(),
+			path, size, std::promise<GLuint>(), std::promise<glm::ivec2>(),
 			std::promise<int>());
 		cv.notify_one();
 
@@ -212,7 +198,7 @@ class texture_load_thread {
 	auto get_size_type(const std::string &path) {
 		std::scoped_lock lk(mutex);
 		auto &request = requests.emplace_front(
-			path, glm::ivec2(0, 0), std::promise<image_data>(),
+			path, glm::ivec2(0, 0), std::promise<GLuint>(),
 			std::promise<glm::ivec2>(), std::promise<int>());
 		cv.notify_one();
 
