@@ -25,7 +25,7 @@ class image_viewer {
 	GLuint white_tex;
 	shader_program program;
 
-	texture_load_thread loader_pool;
+	texture_load_pool loader_pool;
 	// key for following maps is texture_key(image_index, texture)
 	std::unordered_map<int64_t, lazy_load<GLuint>> textures;
 	std::unordered_map<glm::int64, bool> texture_used;
@@ -167,15 +167,30 @@ void main()
 			pressed_key = -1;
 
 		if (action == GLFW_PRESS || action == GLFW_REPEAT)
-			switch (key) {
-			case GLFW_KEY_SPACE:
-			case GLFW_KEY_LEFT:
-				advance_current_pos(1);
-				break;
-			case GLFW_KEY_BACKSPACE:
-			case GLFW_KEY_RIGHT:
-				advance_current_pos(-1);
-				break;
+			if (curr_view_mode == view_mode::vertical) {
+				switch (key) {
+				case GLFW_KEY_SPACE:
+				case GLFW_KEY_LEFT:
+					vertical_scroll(-200.f);
+					fix_vertical_limits();
+					break;
+				case GLFW_KEY_BACKSPACE:
+				case GLFW_KEY_RIGHT:
+					vertical_scroll(200.f);
+					fix_vertical_limits();
+					break;
+				}
+			} else {
+				switch (key) {
+				case GLFW_KEY_SPACE:
+				case GLFW_KEY_LEFT:
+					advance_current_pos(1);
+					break;
+				case GLFW_KEY_BACKSPACE:
+				case GLFW_KEY_RIGHT:
+					advance_current_pos(-1);
+					break;
+				}
 			}
 		if (action == GLFW_PRESS)
 			switch (key) {
@@ -759,8 +774,7 @@ void main()
 		}
 
 		for (auto &[key, used] : texture_used)
-			if (!used)
-			{
+			if (!used) {
 				glDeleteTextures(1, &textures[key].get_or(0));
 				textures.erase(key);
 			}
@@ -815,7 +829,7 @@ void main()
 
 	~image_viewer() {
 		glDeleteTextures(1, &white_tex);
-		for (auto&[key, tex] : textures)
+		for (auto &[key, tex] : textures)
 			glDeleteTextures(1, &tex.get());
 		glDeleteVertexArrays(1, &null_vaoID);
 		program.destroy();

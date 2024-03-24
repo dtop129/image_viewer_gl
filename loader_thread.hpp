@@ -104,7 +104,7 @@ template <typename T> class lazy_load {
 	bool has_value() const { return !unset; }
 };
 
-class texture_load_thread {
+class texture_load_pool {
   private:
 	std::vector<std::jthread> worker_threads;
 	GLFWwindow *load_window;
