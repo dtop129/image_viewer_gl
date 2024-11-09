@@ -28,7 +28,7 @@ class image_viewer {
 	texture_load_pool loader_pool;
 	// key for following maps is texture_key(image_index, texture)
 	std::unordered_map<int64_t, lazy_load<GLuint>> textures;
-	std::unordered_map<glm::int64, bool> texture_used;
+	std::unordered_map<int64_t, bool> texture_used;
 
 	// images vectors
 	std::vector<std::string> image_paths;
@@ -53,6 +53,8 @@ class image_viewer {
 	float vertical_offset = 0.f;
 
 	int pressed_key;
+	double time_pressed_key = 0.0;
+	double repeat_wait = 0.0;
 
 	void init_window() {
 		if (!glfwInit())
@@ -62,12 +64,13 @@ class image_viewer {
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-		load_window = glfwCreateWindow(1, 1, "load window", nullptr, nullptr);
-
 		glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
 		window =
-			glfwCreateWindow(800, 600, "image viewer", nullptr, load_window);
+			glfwCreateWindow(800, 600, "image viewer", nullptr, nullptr);
+
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+		load_window = glfwCreateWindow(1, 1, "load window", nullptr, window);
+
 		if (!window) {
 			fprintf(stderr, "ERROR: could not open window with GLFW3\n");
 			glfwTerminate();
@@ -161,12 +164,15 @@ void main()
 	}
 
 	void on_key(int key, int action) {
-		if (action == GLFW_PRESS)
+		if (action == GLFW_PRESS) {
 			pressed_key = key;
+			time_pressed_key = glfwGetTime();
+			repeat_wait = 0.3;
+		}
 		if (action == GLFW_RELEASE && key == pressed_key)
 			pressed_key = -1;
 
-		if (action == GLFW_PRESS || action == GLFW_REPEAT)
+		if (action == GLFW_PRESS) {
 			if (curr_view_mode == view_mode::vertical) {
 				switch (key) {
 				case GLFW_KEY_SPACE:
@@ -192,6 +198,7 @@ void main()
 					break;
 				}
 			}
+		}
 		if (action == GLFW_PRESS)
 			switch (key) {
 			case GLFW_KEY_Q:
@@ -260,6 +267,24 @@ void main()
 		case GLFW_KEY_UP:
 			vertical_scroll(offset);
 			fix_vertical_limits();
+			break;
+		case GLFW_KEY_SPACE:
+		case GLFW_KEY_LEFT:
+			if (glfwGetTime() - time_pressed_key > repeat_wait)
+			{
+				advance_current_pos(1);
+				time_pressed_key = glfwGetTime();
+				repeat_wait = 0.05;
+			}
+			break;
+		case GLFW_KEY_BACKSPACE:
+		case GLFW_KEY_RIGHT:
+			if (glfwGetTime() - time_pressed_key > repeat_wait)
+			{
+				advance_current_pos(-1);
+				time_pressed_key = glfwGetTime();
+				repeat_wait = 0.05;
+			}
 			break;
 		default:
 			return;
