@@ -619,8 +619,8 @@ void main()
 		int first_alone_score = 0;
 		bool invert_alone = false;
 		for (unsigned int i = 0; i <= indices.size(); ++i) {
-			int type = i == indices.size() ? 0 : get_image_type(indices[i]);
-			if (i == indices.size() || type == 3) {
+			int type = (i == indices.size()) ? 3 : get_image_type(indices[i]);
+			if (type == 3) {
 				first_alone_score +=
 					(i < indices.size()) && ((i - start) % 2 == 1);
 				first_alone_score -=
