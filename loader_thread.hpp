@@ -119,16 +119,17 @@ class texture_load_pool {
 	std::mutex context_mutex;
 	std::mutex mutex;
 	std::condition_variable cv;
-	bool stop = false;
 
-	void loader() {
+	void loader(std::stop_token stop) {
 		avir::CLancIR resizer;
 
 		while (true) {
 			std::unique_lock lk(mutex);
 			if (requests.empty())
-				cv.wait(lk, [this] { return !requests.empty() || stop; });
-			if (stop)
+				cv.wait(lk, [this, &stop] {
+					return !requests.empty() || stop.stop_requested();
+				});
+			if (stop.stop_requested())
 				return;
 
 			auto [req_path, req_size, texture_pr, size_pr, type_pr] =
@@ -186,7 +187,8 @@ class texture_load_pool {
 	void init(GLFWwindow *load_window, unsigned int n_workers) {
 		this->load_window = load_window;
 		for (int i = 0; i < n_workers; ++i)
-			worker_threads.emplace_back([this] { loader(); });
+			worker_threads.emplace_back(
+				[this](std::stop_token s) { loader(s); });
 
 		const std::string vert_shader = R"(
 #version 460 core
@@ -223,8 +225,8 @@ void main()
 		program.destroy();
 		glfwMakeContextCurrent(prev_context);
 
-		std::scoped_lock lk(mutex);
-		stop = true;
+		for (auto &worker : worker_threads)
+			worker.request_stop();
 		cv.notify_all();
 	}
 
